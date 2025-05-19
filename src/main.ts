@@ -13,10 +13,9 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false
-    }
-  });
-  // Load the index.html of the app
-  mainWindow.loadFile(path.join(__dirname, '../src/index.html'));
+    }  });
+  // Load the index.html of the app built by Webpack
+  mainWindow.loadFile(path.join(__dirname, 'index.html'));
   // Always open DevTools for debugging
   mainWindow.webContents.openDevTools();
 

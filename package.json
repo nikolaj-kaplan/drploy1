@@ -4,21 +4,32 @@
   "description": "Simple Electron file explorer with TypeScript",
   "main": "dist/main.js",
   "scripts": {
-    "start": "tsc && electron .",
-    "build": "tsc",
-    "watch": "tsc -w",
-    "dev": "electron --inspect=5858 ."
+    "start": "npm run build && electron .",
+    "build": "webpack --config webpack.config.js",
+    "watch": "webpack --config webpack.config.js --watch",
+    "dev": "npm run build && electron --inspect=5858 .",
+    "debug": "webpack --config webpack.config.js && electron --inspect=5858 ."
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "devDependencies": {
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "css-loader": "^6.7.3",
     "electron": "^36.2.1",
     "electron-reload": "^2.0.0-alpha.1",
+    "html-webpack-plugin": "^5.5.0",
+    "style-loader": "^3.3.2",
+    "ts-loader": "^9.4.2",
     "ts-node": "^10.9.2",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "webpack": "^5.82.0",
+    "webpack-cli": "^5.0.2"
   },
   "dependencies": {
-    "fs": "^0.0.1-security"
+    "fs": "^0.0.1-security",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
   }
 }

@@ -17,7 +17,7 @@
       "outFiles": [
         "${workspaceFolder}/dist/**/*.js"
       ],
-      "preLaunchTask": "tsc: build - tsconfig.json"
+      "preLaunchTask": "npm: build"
     },
     {
       "name": "Electron: Renderer",

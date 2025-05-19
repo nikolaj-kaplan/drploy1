@@ -9,9 +9,23 @@
       ],
       "group": {
         "kind": "build",
-        "isDefault": true
+        "isDefault": false
       },
       "label": "tsc: build - tsconfig.json"
+    },
+    {
+      "type": "npm",
+      "script": "build",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": [
+        "$tsc", 
+        "$eslint-stylish"
+      ],
+      "label": "npm: build",
+      "detail": "webpack --config webpack.config.js"
     }
   ]
 }
