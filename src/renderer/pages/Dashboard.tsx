@@ -30,8 +30,8 @@ const Dashboard: React.FC = () => {
           setEnvironments(initialEnvironments);
           setIsLoading(false);
           
-          // Check status for all environments
-          handleCheckAllStatus();
+          // Check status for all environments - pass initialEnvironments directly
+          handleCheckAllStatus(initialEnvironments);
         }
       } catch (error) {
         console.error('Failed to load settings:', error);
@@ -82,7 +82,10 @@ const Dashboard: React.FC = () => {
       );
     }
   };
-    const handleCheckAllStatus = async () => {
+    const handleCheckAllStatus = async (initialEnvironments?: Environment[]) => {
+    // If initialEnvironments is provided, use it, otherwise use the current state
+    const envsToCheck = initialEnvironments || environments;
+    
     // Set all environments to loading
     setEnvironments(prevEnvs => 
       prevEnvs.map(env => ({ ...env, status: 'loading' as 'loading' }))
@@ -90,16 +93,13 @@ const Dashboard: React.FC = () => {
     
     addToLog('Checking status for all environments...');
     
-    // Check status for each environment individually
-    // Make a local copy to avoid state change issues during the loop
-    const currentEnvironments = [...environments];
-    
-    if (currentEnvironments.length === 0) {
+    // Use the provided environments or current state
+    if (envsToCheck.length === 0) {
       addToLog('No environments found to check.');
       return;
     }
     
-    for (const env of currentEnvironments) {
+    for (const env of envsToCheck) {
       await handleCheckStatus(env.name);
     }
     
@@ -192,7 +192,7 @@ const Dashboard: React.FC = () => {
       <h1>Git Deployment Manager</h1>
       
       <div className="action-buttons">
-        <button onClick={handleCheckAllStatus}>Check All Status</button>
+        <button onClick={() => handleCheckAllStatus()}>Check All Status</button>
         <button 
           onClick={handleDeployAllOutdated}
           disabled={!environments.some(env => env.status === 'pending-commits')}
