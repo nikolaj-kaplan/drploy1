@@ -15,20 +15,8 @@ const EnvironmentRow: React.FC<EnvironmentRowProps> = ({
   onDeploy
 }) => {
   const { name, branch, status, lastDeployedCommit, currentHeadCommit } = environment;
-  
-  const getStatusColor = () => {
-    switch (status) {
-      case 'up-to-date':
-        return 'green';
-      case 'pending-commits':
-        return 'red';
-      case 'loading':
-        return 'gray';
-      case 'error':
-        return 'orange';
-      default:
-        return 'gray';
-    }
+    const getStatusClass = () => {
+    return `status-indicator status-indicator-${status}`;
   };
   
   return (
@@ -36,7 +24,7 @@ const EnvironmentRow: React.FC<EnvironmentRowProps> = ({
       <td>{name}</td>
       <td>{branch}</td>
       <td>
-        <div className="status-indicator" style={{ backgroundColor: getStatusColor() }}></div>
+        <div className={getStatusClass()}></div>
         {status}
       </td>
       <td>{lastDeployedCommit ? lastDeployedCommit.substr(0, 7) : 'Not deployed'}</td>

@@ -14,6 +14,23 @@ interface UserSettings {
   };
 }
 
+// Define interfaces for our environment status and deployment tracking
+interface EnvironmentStatus {
+  name: string;
+  branch: string;
+  status: string;
+  lastDeployedCommit: string | null;
+  currentHeadCommit: string | null;
+  error?: string;
+}
+
+interface DeploymentResult {
+  name: string;
+  deployed: boolean;
+  output?: string;
+  error?: string;
+}
+
 // Initialize electron-store for persistent storage
 const store = new Store<UserSettings>({
   defaults: {
@@ -28,8 +45,17 @@ const store = new Store<UserSettings>({
   }
 });
 
-// Get user settings from store
-let userSettings: UserSettings = store.get() as UserSettings;
+// Get user settings from store using store.get() as separate calls since store.get() with no args doesn't exist in the type
+let userSettings: UserSettings = {
+  githubToken: store.get('githubToken') || '',
+  repositoryUrl: store.get('repositoryUrl') || '',
+  environmentMappings: store.get('environmentMappings') || {
+    'dev-test': 'develop',
+    'test': 'release/test',
+    'preprod': 'release/candidate',
+    'prod': 'master'
+  }
+};
 
 // Local repository path
 let repoPath = path.join(os.homedir(), '.git-deployer', 'repository');
@@ -38,7 +64,8 @@ let repoPath = path.join(os.homedir(), '.git-deployer', 'repository');
 let mainWindow: BrowserWindow | null = null;
 
 function createWindow() {
-  // Create the browser window  mainWindow = new BrowserWindow({
+  // Create the browser window  
+  mainWindow = new BrowserWindow({
     width: 1000,
     height: 800,
     webPreferences: {
@@ -110,6 +137,10 @@ ipcMain.on('initialize-repository', async (event, { token, url }) => {
     userSettings.githubToken = token;
     userSettings.repositoryUrl = url;
     
+    // Save individual settings to electron-store
+    (store as any).set('githubToken', token);
+    (store as any).set('repositoryUrl', url);
+    
     // Create directory if it doesn't exist
     if (!fs.existsSync(repoPath)) {
       fs.mkdirSync(repoPath, { recursive: true });
@@ -153,14 +184,13 @@ ipcMain.on('check-environment-status', async (event, env) => {
     
     // Check if tag exists
     const tagExists = await executeGitCommand(`git tag -l ${env}`, repoPath);
-    
-    let lastDeployedCommit = null;
-    let status = 'up-to-date';
+      let lastDeployedCommit: string | null = null;
+    let status: string = 'up-to-date';
     
     if (tagExists.output.trim()) {
       // Get commit for tag
       const tagCommitResult = await executeGitCommand(`git rev-parse ${env}`, repoPath);
-      lastDeployedCommit = tagCommitResult.output.trim();
+      lastDeployedCommit = tagCommitResult.output.trim() || null;
       
       // Check if there are commits between tag and HEAD
       const diffResult = await executeGitCommand(`git log ${env}..HEAD --oneline`, repoPath);
@@ -238,7 +268,7 @@ ipcMain.on('get-commits-between-tag-and-head', async (event, env) => {
     // Check if tag exists
     const tagExists = await executeGitCommand(`git tag -l ${env}`, repoPath);
     
-    let commits = [];
+    let commits: any[] = [];
     
     if (tagExists.output.trim()) {
       // Get commits between tag and HEAD
@@ -256,15 +286,17 @@ ipcMain.on('get-commits-between-tag-and-head', async (event, env) => {
     
     event.reply(`${env}-commits-retrieved`, commits);
   } catch (error) {
-    event.reply(`${env}-commits-retrieved`, []);
+    event.reply(`${env}-commits-retrieved`, [] as any[]);
   }
 });
 
 // Settings IPC handlers
-ipcMain.on('save-settings', (event, settings) => {
+ipcMain.on('save-settings', (event, settings: UserSettings) => {
   userSettings = settings;
   // Save settings to store for persistence
-  store.set(settings);
+  (store as any).set('githubToken', settings.githubToken);
+  (store as any).set('repositoryUrl', settings.repositoryUrl);
+  (store as any).set('environmentMappings', settings.environmentMappings);
   event.reply('settings-saved', true);
 });
 
@@ -276,7 +308,7 @@ ipcMain.on('update-environment-mapping', (event, { env, branch }) => {
   if (userSettings.environmentMappings) {
     userSettings.environmentMappings[env] = branch;
     // Save updated settings to store
-    store.set('environmentMappings', userSettings.environmentMappings);
+    (store as any).set('environmentMappings', userSettings.environmentMappings);
     event.reply('mapping-updated', true);
   } else {
     event.reply('mapping-updated', false);
@@ -290,7 +322,7 @@ ipcMain.on('check-all-environments', async (event) => {
     const environments = Object.keys(userSettings.environmentMappings);
     
     // Create an array to hold all environment statuses
-    const results = [];
+    const results: EnvironmentStatus[] = [];
     
     // Check each environment
     for (const env of environments) {
@@ -304,17 +336,16 @@ ipcMain.on('check-all-environments', async (event) => {
         // Get current HEAD commit
         const headResult = await executeGitCommand('git rev-parse HEAD', repoPath);
         const headCommit = headResult.output.trim();
-        
-        // Check if tag exists
+          // Check if tag exists
         const tagExists = await executeGitCommand(`git tag -l ${env}`, repoPath);
         
-        let lastDeployedCommit = null;
+        let lastDeployedCommit: string | null = null;
         let status = 'up-to-date';
         
         if (tagExists.output.trim()) {
           // Get commit for tag
           const tagCommitResult = await executeGitCommand(`git rev-parse ${env}`, repoPath);
-          lastDeployedCommit = tagCommitResult.output.trim();
+          lastDeployedCommit = tagCommitResult.output.trim() || null;
           
           // Check if there are commits between tag and HEAD
           const diffResult = await executeGitCommand(`git log ${env}..HEAD --oneline`, repoPath);
@@ -365,7 +396,7 @@ ipcMain.on('deploy-all-outdated', async (event) => {
     const environments = Object.keys(userSettings.environmentMappings);
     
     // Create an array to hold all deployment results
-    const results = [];
+    const results: DeploymentResult[] = [];
     
     // Check and deploy to each outdated environment
     for (const env of environments) {

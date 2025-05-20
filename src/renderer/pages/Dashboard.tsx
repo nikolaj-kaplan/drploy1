@@ -18,12 +18,11 @@ const Dashboard: React.FC = () => {
     const loadSettings = async () => {
       try {
         const settings = await SettingsService.loadSettings();
-        if (settings && settings.environmentMappings) {
-          // Create initial environment objects
-          const initialEnvironments = Object.keys(settings.environmentMappings).map(envName => ({
+        if (settings && settings.environmentMappings) {          // Create initial environment objects with correctly typed status
+          const initialEnvironments: Environment[] = Object.keys(settings.environmentMappings).map(envName => ({
             name: envName,
             branch: settings.environmentMappings[envName],
-            status: 'loading',
+            status: 'loading' as 'loading', // Explicit type assertion for the union type
             lastDeployedCommit: null,
             currentHeadCommit: null
           }));
@@ -42,12 +41,11 @@ const Dashboard: React.FC = () => {
     
     loadSettings();
   }, []);
-  
-  const handleCheckStatus = async (envName: string) => {
+    const handleCheckStatus = async (envName: string) => {
     // Update environment status to loading
     setEnvironments(prevEnvs => 
       prevEnvs.map(env => 
-        env.name === envName ? { ...env, status: 'loading' } : env
+        env.name === envName ? { ...env, status: 'loading' as 'loading' } : env
       )
     );
     
@@ -65,38 +63,43 @@ const Dashboard: React.FC = () => {
           )
         );
         
-        addToLog(`Status for ${envName}: ${envData.status}`);
-      } else {
+        addToLog(`Status for ${envName}: ${envData.status}`);      } else {
         setEnvironments(prevEnvs => 
           prevEnvs.map(env => 
-            env.name === envName ? { ...env, status: 'error' } : env
+            env.name === envName ? { ...env, status: 'error' as 'error' } : env
           )
         );
         
         addToLog(`Error checking ${envName} status: ${result.error}`);
-      }
-    } catch (error) {
+      }    } catch (error) {
       console.error(`Error checking status for ${envName}:`, error);
       addToLog(`Error checking ${envName} status: ${error}`);
       
       setEnvironments(prevEnvs => 
         prevEnvs.map(env => 
-          env.name === envName ? { ...env, status: 'error' } : env
+          env.name === envName ? { ...env, status: 'error' as 'error' } : env
         )
       );
     }
   };
-  
-  const handleCheckAllStatus = async () => {
+    const handleCheckAllStatus = async () => {
     // Set all environments to loading
     setEnvironments(prevEnvs => 
-      prevEnvs.map(env => ({ ...env, status: 'loading' }))
+      prevEnvs.map(env => ({ ...env, status: 'loading' as 'loading' }))
     );
     
     addToLog('Checking status for all environments...');
     
     // Check status for each environment individually
-    for (const env of environments) {
+    // Make a local copy to avoid state change issues during the loop
+    const currentEnvironments = [...environments];
+    
+    if (currentEnvironments.length === 0) {
+      addToLog('No environments found to check.');
+      return;
+    }
+    
+    for (const env of currentEnvironments) {
       await handleCheckStatus(env.name);
     }
     
@@ -121,12 +124,11 @@ const Dashboard: React.FC = () => {
       setIsLoadingCommits(false);
     }
   };
-  
-  const handleDeploy = async (envName: string) => {
+    const handleDeploy = async (envName: string) => {
     // Update environment status to loading
     setEnvironments(prevEnvs => 
       prevEnvs.map(env => 
-        env.name === envName ? { ...env, status: 'loading' } : env
+        env.name === envName ? { ...env, status: 'loading' as 'loading' } : env
       )
     );
     
@@ -144,23 +146,21 @@ const Dashboard: React.FC = () => {
         // If we were showing commits for this environment, refresh them
         if (selectedEnvironment === envName) {
           handleViewDetails(envName);
-        }
-      } else {
+        }      } else {
         setEnvironments(prevEnvs => 
           prevEnvs.map(env => 
-            env.name === envName ? { ...env, status: 'error' } : env
+            env.name === envName ? { ...env, status: 'error' as 'error' } : env
           )
         );
         
         addToLog(`Error deploying to ${envName}: ${result.error}`);
-      }
-    } catch (error) {
+      }    } catch (error) {
       console.error(`Error deploying to ${envName}:`, error);
       addToLog(`Error deploying to ${envName}: ${error}`);
       
       setEnvironments(prevEnvs => 
         prevEnvs.map(env => 
-          env.name === envName ? { ...env, status: 'error' } : env
+          env.name === envName ? { ...env, status: 'error' as 'error' } : env
         )
       );
     }

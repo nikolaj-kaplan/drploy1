@@ -66,6 +66,31 @@ input, select {
   border-radius: 4px;
 }
 
+/* Status Indicators */
+.status-indicator {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  margin-right: 8px;
+}
+
+.status-indicator-up-to-date {
+  background-color: green;
+}
+
+.status-indicator-pending-commits {
+  background-color: red;
+}
+
+.status-indicator-loading {
+  background-color: gray;
+}
+
+.status-indicator-error {
+  background-color: orange;
+}
+
 /* App Layout */
 .app-container {
   display: flex;
