@@ -259,6 +259,17 @@ input, select {
   border-radius: 4px;
 }
 
+.log-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.log-header h3 {
+  margin: 0;
+}
+
 .log-panel pre {
   font-family: monospace;
   font-size: 13px;

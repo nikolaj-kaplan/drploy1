@@ -214,6 +214,11 @@ const Dashboard: React.FC = () => {
     LogService.log('Completed deploying to all outdated environments.');
   };
   
+  const handleClearLog = () => {
+    setLogOutput('');
+    LogService.log('Log cleared');
+  };
+  
   if (isLoading) {
     return <div className="loading">Loading environments...</div>;
   }
@@ -262,9 +267,11 @@ const Dashboard: React.FC = () => {
           <CommitList commits={commits} loading={isLoadingCommits} />
         </div>
       )}
-      
-      <div className="log-panel">
-        <h3>Log Output</h3>
+        <div className="log-panel">
+        <div className="log-header">
+          <h3>Log Output</h3>
+          <button onClick={handleClearLog}>Clear Log</button>
+        </div>
         <pre ref={logPanelRef}>{logOutput}</pre>
       </div>
     </div>
