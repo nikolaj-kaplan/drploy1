@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as child_process from 'child_process';
 import * as os from 'os';
 import Store from 'electron-store';
+import { log } from 'console';
 
 // Define the schema for our settings
 interface UserSettings {
@@ -29,6 +30,23 @@ interface DeploymentResult {
   deployed: boolean;
   output?: string;
   error?: string;
+}
+
+// Logger for application events and errors
+function logMessage(message: string, isError: boolean = false) {
+  //const timestamp = new Date().toISOString();
+  const logPrefix = isError ? '[ERROR]' : '[INFO]';
+  const logMessage = `${logPrefix} ${message}`;
+  
+  console.log(logMessage);
+  
+  // Send log message to renderer process if main window exists
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('log-message', {
+      message: logMessage,
+      isError
+    });
+  }
 }
 
 // Initialize electron-store for persistent storage
@@ -78,6 +96,10 @@ function getRepoPath(repoUrl: string): string {
 
 // Gets the actual repository path for the current settings
 function getCurrentRepoPath(): string {
+  if (!userSettings.repositoryUrl) {
+    // If no repository URL is set, return a default path that we can create
+    return path.join(os.homedir(), '.git-deployer', 'repositories', 'default-repo');
+  }
   return getRepoPath(userSettings.repositoryUrl);
 }
 
@@ -109,11 +131,24 @@ function createWindow() {
 
 // This method will be called when Electron has finished initialization
 app.whenReady().then(() => {
+  logMessage('Application starting up');
   createWindow();
+
+  // Ensure the base repository directory structure exists
+  const baseRepoDir = path.join(os.homedir(), '.git-deployer', 'repositories');
+  if (!fs.existsSync(baseRepoDir)) {
+    try {
+      fs.mkdirSync(baseRepoDir, { recursive: true });
+      logMessage(`Created base repository directory: ${baseRepoDir}`);
+    } catch (error) {
+      logMessage(`Failed to create base repository directory: ${error instanceof Error ? error.message : String(error)}`, true);
+    }
+  }
 
   app.on('activate', () => {
     // On macOS it's common to re-create a window when the dock icon is clicked
     if (mainWindow === null) {
+      logMessage('Re-creating application window');
       createWindow();
     }
   });
@@ -141,11 +176,19 @@ ipcMain.on('list-directory', (event, dirPath) => {
 
 // Execute a Git command and return the result
 function executeGitCommand(command: string, cwd: string = getCurrentRepoPath()): Promise<{ success: boolean; output: string; error?: string }> {
+  logMessage(`Executing command: ${cwd}>${command}`);
+  
   return new Promise((resolve) => {
     child_process.exec(command, { cwd }, (error, stdout, stderr) => {
       if (error) {
-        resolve({ success: false, output: stdout, error: stderr || error.message });
+        const errorMsg = stderr || error.message;
+        logMessage(`Command failed: ${errorMsg}`, true);
+        resolve({ success: false, output: stdout, error: errorMsg });
       } else {
+        logMessage(`Command succeeded: ${command}`);
+        const lines = stdout.split('\n').filter(line => line.trim());
+        if(lines.length <= 1) logMessage(`Command output: ${stdout}`);
+        else logMessage(`Command output:\n${lines.map(x => "   " + x).join('\n')}`);
         resolve({ success: true, output: stdout });
       }
     });
@@ -155,18 +198,21 @@ function executeGitCommand(command: string, cwd: string = getCurrentRepoPath()):
 // Handle repository initialization
 ipcMain.on('initialize-repository', async (event, { token, url }) => {
   try {
+    logMessage(`Initializing repository: ${url}`);
+    
     userSettings.githubToken = token;
     userSettings.repositoryUrl = url;
     
     // Save individual settings to electron-store
-    (store as any).set('githubToken', token);
-    (store as any).set('repositoryUrl', url);
+    store.set('githubToken', token);
+    store.set('repositoryUrl', url);
     
     // Get the repository path for the current URL
     const repoPath = getCurrentRepoPath();
     
     // Create directory if it doesn't exist
     if (!fs.existsSync(repoPath)) {
+      logMessage(`Creating repository directory: ${repoPath}`);
       fs.mkdirSync(repoPath, { recursive: true });
     }
     
@@ -175,20 +221,32 @@ ipcMain.on('initialize-repository', async (event, { token, url }) => {
     
     let result;
     if (isRepo) {
+      logMessage('Repository already exists, fetching latest changes');
       // Fetch latest changes
+      await executeGitCommand('git fetch --tags --force');
       result = await executeGitCommand('git fetch --all');
     } else {
+      logMessage('Cloning repository for the first time');
       // Clone the repository
       const authUrl = url.replace('https://', `https://${token}@`);
       result = await executeGitCommand(`git clone ${authUrl} .`);
     }
     
+    if (result.success) {
+      logMessage('Repository initialization completed successfully');
+    } else {
+      logMessage(`Repository initialization failed: ${result.error}`, true);
+    }
+    
     event.reply('repo-initialized', result);
   } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    logMessage(`Exception during repository initialization: ${errorMsg}`, true);
+    
     event.reply('repo-initialized', { 
       success: false, 
       output: '', 
-      error: error instanceof Error ? error.message : String(error) 
+      error: errorMsg
     });
   }
 });
@@ -315,12 +373,33 @@ ipcMain.on('get-commits-between-tag-and-head', async (event, env) => {
 });
 
 // Settings IPC handlers
-ipcMain.on('save-settings', (event, settings: UserSettings) => {
+ipcMain.on('save-settings', async (event, settings: UserSettings) => {
   userSettings = settings;
   // Save settings to store for persistence
-  (store as any).set('githubToken', settings.githubToken);
-  (store as any).set('repositoryUrl', settings.repositoryUrl);
-  (store as any).set('environmentMappings', settings.environmentMappings);
+  store.set('githubToken', settings.githubToken);
+  store.set('repositoryUrl', settings.repositoryUrl);
+  store.set('environmentMappings', settings.environmentMappings);
+  const repoPath = getCurrentRepoPath();
+
+  // Create directory if it doesn't exist
+  if (!fs.existsSync(repoPath)) {
+    try {
+      fs.mkdirSync(repoPath, { recursive: true });
+      logMessage(`Created repository directory: ${repoPath}`);
+    } catch (error) {
+      logMessage(`Failed to create repository directory: ${error instanceof Error ? error.message : String(error)}`, true);
+    }
+  }
+
+  // Initialize the repository if it doesn't exist
+  if (!fs.existsSync(path.join(repoPath, '.git'))) {
+    logMessage('Repository does not exist, initializing...');
+    await executeGitCommand(`git clone ${settings.repositoryUrl} ${repoPath}`);
+  } else {
+    logMessage('Repository already exists, fetching latest changes');
+    await executeGitCommand('git fetch --tags --force', repoPath);
+  }
+
   event.reply('settings-saved', true);
 });
 
@@ -332,7 +411,7 @@ ipcMain.on('update-environment-mapping', (event, { env, branch }) => {
   if (userSettings.environmentMappings) {
     userSettings.environmentMappings[env] = branch;
     // Save updated settings to store
-    (store as any).set('environmentMappings', userSettings.environmentMappings);
+    store.set('environmentMappings', userSettings.environmentMappings);
     event.reply('mapping-updated', true);
   } else {
     event.reply('mapping-updated', false);
@@ -488,4 +567,10 @@ ipcMain.on('deploy-all-outdated', async (event) => {
       error: error instanceof Error ? error.message : String(error) 
     });
   }
+});
+
+// Handle logs from the renderer process
+ipcMain.on('log-from-renderer', (_, { message, isError }) => {
+  // Just use our standard logging function
+  logMessage(message, isError);
 });
