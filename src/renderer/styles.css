@@ -134,3 +134,114 @@ input, select {
   padding: 20px;
   color: #666;
 }
+
+/* Dashboard Styles */
+.dashboard {
+  padding: 20px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.dashboard h1 {
+  margin-bottom: 20px;
+}
+
+/* Action Buttons */
+.action-buttons {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+/* Environments Table */
+.environments-table {
+  margin-bottom: 30px;
+  overflow-x: auto;
+}
+
+.environments-table table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 20px;
+}
+
+.environments-table th {
+  text-align: left;
+  padding: 12px 15px;
+  background-color: #f2f2f2;
+  border-bottom: 2px solid #ddd;
+  font-weight: 600;
+}
+
+.environments-table td {
+  padding: 10px 15px;
+  border-bottom: 1px solid #eee;
+}
+
+.environments-table tr:hover {
+  background-color: #f9f9f9;
+}
+
+.environments-table .actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* Commit Details */
+.commit-details {
+  margin: 20px 0;
+  padding: 15px;
+  background-color: #fff;
+  border-radius: 4px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.commit-list {
+  margin-top: 15px;
+}
+
+.commit-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 10px;
+}
+
+.commit-table th {
+  text-align: left;
+  padding: 10px;
+  background-color: #f2f2f2;
+  border-bottom: 2px solid #ddd;
+}
+
+.commit-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid #eee;
+}
+
+.commit-message {
+  max-width: 400px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Log Panel */
+.log-panel {
+  margin-top: 30px;
+  padding: 15px;
+  background-color: #f8f8f8;
+  border: 1px solid #eee;
+  border-radius: 4px;
+}
+
+.log-panel pre {
+  font-family: monospace;
+  font-size: 13px;
+  white-space: pre-wrap;
+  max-height: 300px;
+  overflow-y: auto;
+  margin: 10px 0 0;
+  padding: 10px;
+  background-color: #fff;
+  border: 1px solid #eee;
+}
