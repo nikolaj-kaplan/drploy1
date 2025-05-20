@@ -106,11 +106,8 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onClose }) => {
       </div>
     );
   }
-  
-  return (
+    return (
     <div className="settings-page">
-      <h1>Settings</h1>
-      
       <section className="settings-section">
         <h2>GitHub Authentication</h2>
         <div className="form-group">

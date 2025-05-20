@@ -186,11 +186,8 @@ const Dashboard: React.FC = () => {
   if (isLoading) {
     return <div className="loading">Loading environments...</div>;
   }
-  
-  return (
+    return (
     <div className="dashboard">
-      <h1>Git Deployment Manager</h1>
-      
       <div className="action-buttons">
         <button onClick={() => handleCheckAllStatus()}>Check All Status</button>
         <button 

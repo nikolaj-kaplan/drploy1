@@ -45,9 +45,9 @@ const App: React.FC = () => {
   if (!isInitialized) {
     return <InitialSetup onSetupComplete={handleSetupComplete} />;
   }
-
   return (
-    <div className="app-container">      <header className="app-header">
+    <div className="app-container">
+      <header className="app-header">
         <h1>Git Deployment Manager</h1>
         <button className="settings-button" onClick={toggleSettings}>
           {showSettings ? 'Back to Dashboard' : 'Settings'}
