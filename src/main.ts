@@ -57,8 +57,29 @@ let userSettings: UserSettings = {
   }
 };
 
-// Local repository path
-let repoPath = path.join(os.homedir(), '.git-deployer', 'repository');
+// Function to get the repository path for a specific repository URL
+function getRepoPath(repoUrl: string): string {
+  // Extract a unique name from the repository URL
+  // We'll use the last part of the URL (repo name) and add a hash of the full URL
+  const urlObj = new URL(repoUrl);
+  const pathParts = urlObj.pathname.split('/').filter(p => p);
+  
+  // Get the repository name (last part of the path)
+  const repoName = pathParts.length > 0 ? 
+    pathParts[pathParts.length - 1].replace(/\.git$/, '') : 
+    'default-repo';
+  
+  // Create a simple hash of the URL for uniqueness
+  const hash = Buffer.from(repoUrl).toString('base64')
+    .replace(/[/+=]/g, '').substring(0, 8);
+  
+  return path.join(os.homedir(), '.git-deployer', 'repositories', `${repoName}-${hash}`);
+}
+
+// Gets the actual repository path for the current settings
+function getCurrentRepoPath(): string {
+  return getRepoPath(userSettings.repositoryUrl);
+}
 
 // Keep a global reference of the window object to prevent garbage collection
 let mainWindow: BrowserWindow | null = null;
@@ -119,7 +140,7 @@ ipcMain.on('list-directory', (event, dirPath) => {
 });
 
 // Execute a Git command and return the result
-function executeGitCommand(command: string, cwd: string = repoPath): Promise<{ success: boolean; output: string; error?: string }> {
+function executeGitCommand(command: string, cwd: string = getCurrentRepoPath()): Promise<{ success: boolean; output: string; error?: string }> {
   return new Promise((resolve) => {
     child_process.exec(command, { cwd }, (error, stdout, stderr) => {
       if (error) {
@@ -141,6 +162,9 @@ ipcMain.on('initialize-repository', async (event, { token, url }) => {
     (store as any).set('githubToken', token);
     (store as any).set('repositoryUrl', url);
     
+    // Get the repository path for the current URL
+    const repoPath = getCurrentRepoPath();
+    
     // Create directory if it doesn't exist
     if (!fs.existsSync(repoPath)) {
       fs.mkdirSync(repoPath, { recursive: true });
@@ -152,11 +176,11 @@ ipcMain.on('initialize-repository', async (event, { token, url }) => {
     let result;
     if (isRepo) {
       // Fetch latest changes
-      result = await executeGitCommand('git fetch --all', repoPath);
+      result = await executeGitCommand('git fetch --all');
     } else {
       // Clone the repository
       const authUrl = url.replace('https://', `https://${token}@`);
-      result = await executeGitCommand(`git clone ${authUrl} .`, repoPath);
+      result = await executeGitCommand(`git clone ${authUrl} .`);
     }
     
     event.reply('repo-initialized', result);
@@ -175,25 +199,25 @@ ipcMain.on('check-environment-status', async (event, env) => {
     const branch = userSettings.environmentMappings[env];
     
     // Make sure we're on the right branch
-    await executeGitCommand(`git checkout ${branch}`, repoPath);
-    await executeGitCommand('git pull', repoPath);
+    await executeGitCommand(`git checkout ${branch}`);
+    await executeGitCommand('git pull');
     
     // Get current HEAD commit
-    const headResult = await executeGitCommand('git rev-parse HEAD', repoPath);
+    const headResult = await executeGitCommand('git rev-parse HEAD');
     const headCommit = headResult.output.trim();
     
     // Check if tag exists
-    const tagExists = await executeGitCommand(`git tag -l ${env}`, repoPath);
+    const tagExists = await executeGitCommand(`git tag -l ${env}`);
       let lastDeployedCommit: string | null = null;
     let status: string = 'up-to-date';
     
     if (tagExists.output.trim()) {
       // Get commit for tag
-      const tagCommitResult = await executeGitCommand(`git rev-parse ${env}`, repoPath);
+      const tagCommitResult = await executeGitCommand(`git rev-parse ${env}`);
       lastDeployedCommit = tagCommitResult.output.trim() || null;
       
       // Check if there are commits between tag and HEAD
-      const diffResult = await executeGitCommand(`git log ${env}..HEAD --oneline`, repoPath);
+      const diffResult = await executeGitCommand(`git log ${env}..HEAD --oneline`);
       
       if (diffResult.output.trim()) {
         status = 'pending-commits';
@@ -227,21 +251,21 @@ ipcMain.on('deploy-to-environment', async (event, env) => {
     const branch = userSettings.environmentMappings[env];
     
     // Make sure we're on the right branch
-    await executeGitCommand(`git checkout ${branch}`, repoPath);
-    await executeGitCommand('git pull', repoPath);
+    await executeGitCommand(`git checkout ${branch}`);
+    await executeGitCommand('git pull');
     
     // Delete existing tag if it exists
-    const tagExists = await executeGitCommand(`git tag -l ${env}`, repoPath);
+    const tagExists = await executeGitCommand(`git tag -l ${env}`);
     if (tagExists.output.trim()) {
-      await executeGitCommand(`git tag -d ${env}`, repoPath);
-      await executeGitCommand(`git push origin :refs/tags/${env}`, repoPath);
+      await executeGitCommand(`git tag -d ${env}`);
+      await executeGitCommand(`git push origin :refs/tags/${env}`);
     }
     
     // Create new tag
-    await executeGitCommand(`git tag -a ${env} -m "Deployed to ${env} on ${new Date().toISOString()}"`, repoPath);
+    await executeGitCommand(`git tag -a ${env} -m "Deployed to ${env} on ${new Date().toISOString()}"`);
     
     // Push tag
-    const pushResult = await executeGitCommand(`git push origin ${env}`, repoPath);
+    const pushResult = await executeGitCommand(`git push origin ${env}`);
     
     event.reply(`${env}-deployed`, { 
       success: true, 
@@ -262,18 +286,18 @@ ipcMain.on('get-commits-between-tag-and-head', async (event, env) => {
     const branch = userSettings.environmentMappings[env];
     
     // Make sure we're on the right branch
-    await executeGitCommand(`git checkout ${branch}`, repoPath);
-    await executeGitCommand('git pull', repoPath);
+    await executeGitCommand(`git checkout ${branch}`);
+    await executeGitCommand('git pull');
     
     // Check if tag exists
-    const tagExists = await executeGitCommand(`git tag -l ${env}`, repoPath);
+    const tagExists = await executeGitCommand(`git tag -l ${env}`);
     
     let commits: any[] = [];
     
     if (tagExists.output.trim()) {
       // Get commits between tag and HEAD
       const logFormat = '--pretty=format:{"hash":"%h","message":"%s","author":"%an","timestamp":"%ad"}';
-      const logResult = await executeGitCommand(`git log ${env}..HEAD ${logFormat} --date=iso`, repoPath);
+      const logResult = await executeGitCommand(`git log ${env}..HEAD ${logFormat} --date=iso`);
       
       if (logResult.output.trim()) {
         // Parse the JSON objects
@@ -330,25 +354,25 @@ ipcMain.on('check-all-environments', async (event) => {
       
       try {
         // Make sure we're on the right branch
-        await executeGitCommand(`git checkout ${branch}`, repoPath);
-        await executeGitCommand('git pull', repoPath);
+        await executeGitCommand(`git checkout ${branch}`);
+        await executeGitCommand('git pull');
         
         // Get current HEAD commit
-        const headResult = await executeGitCommand('git rev-parse HEAD', repoPath);
+        const headResult = await executeGitCommand('git rev-parse HEAD');
         const headCommit = headResult.output.trim();
           // Check if tag exists
-        const tagExists = await executeGitCommand(`git tag -l ${env}`, repoPath);
+        const tagExists = await executeGitCommand(`git tag -l ${env}`);
         
         let lastDeployedCommit: string | null = null;
         let status = 'up-to-date';
         
         if (tagExists.output.trim()) {
           // Get commit for tag
-          const tagCommitResult = await executeGitCommand(`git rev-parse ${env}`, repoPath);
+          const tagCommitResult = await executeGitCommand(`git rev-parse ${env}`);
           lastDeployedCommit = tagCommitResult.output.trim() || null;
           
           // Check if there are commits between tag and HEAD
-          const diffResult = await executeGitCommand(`git log ${env}..HEAD --oneline`, repoPath);
+          const diffResult = await executeGitCommand(`git log ${env}..HEAD --oneline`);
           
           if (diffResult.output.trim()) {
             status = 'pending-commits';
@@ -404,16 +428,16 @@ ipcMain.on('deploy-all-outdated', async (event) => {
       
       try {
         // Make sure we're on the right branch
-        await executeGitCommand(`git checkout ${branch}`, repoPath);
-        await executeGitCommand('git pull', repoPath);
+        await executeGitCommand(`git checkout ${branch}`);
+        await executeGitCommand('git pull');
         
         // Check if tag exists
-        const tagExists = await executeGitCommand(`git tag -l ${env}`, repoPath);
+        const tagExists = await executeGitCommand(`git tag -l ${env}`);
         let needsDeployment = false;
         
         if (tagExists.output.trim()) {
           // Check if there are commits between tag and HEAD
-          const diffResult = await executeGitCommand(`git log ${env}..HEAD --oneline`, repoPath);
+          const diffResult = await executeGitCommand(`git log ${env}..HEAD --oneline`);
           needsDeployment = diffResult.output.trim().length > 0;
         } else {
           needsDeployment = true;
@@ -422,15 +446,15 @@ ipcMain.on('deploy-all-outdated', async (event) => {
         if (needsDeployment) {
           // Delete existing tag if it exists
           if (tagExists.output.trim()) {
-            await executeGitCommand(`git tag -d ${env}`, repoPath);
-            await executeGitCommand(`git push origin :refs/tags/${env}`, repoPath);
+            await executeGitCommand(`git tag -d ${env}`);
+            await executeGitCommand(`git push origin :refs/tags/${env}`);
           }
           
           // Create new tag
-          await executeGitCommand(`git tag -a ${env} -m "Deployed to ${env} on ${new Date().toISOString()}"`, repoPath);
+          await executeGitCommand(`git tag -a ${env} -m "Deployed to ${env} on ${new Date().toISOString()}"`);
           
           // Push tag
-          const pushResult = await executeGitCommand(`git push origin ${env}`, repoPath);
+          const pushResult = await executeGitCommand(`git push origin ${env}`);
           
           results.push({
             name: env,
