@@ -1,7 +1,7 @@
 {
-  "name": "electron-test",
+  "name": "DR-ploy",
   "version": "1.0.0",
-  "description": "Simple Electron file explorer with TypeScript",
+  "description": "Deploy tool",
   "main": "dist/main.js",
   "scripts": {
     "start": "npm run build ; electron .",

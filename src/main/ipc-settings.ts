@@ -55,11 +55,12 @@ export function registerSettingsHandlers() {
 /**
  * Register the IPC handler for logs from the renderer process
  */
-export function registerLogHandler() {
-  // Handle logs from the renderer process
+export function registerLogHandler() {  // Handle logs from the renderer process
   ipcMain.on("log-from-renderer", (_, { message, isError }) => {
-    // Just use our standard logging function
-    logMessage(message, isError);
+    // Just log to console without sending back to renderer to avoid duplication
+    const logPrefix = isError ? "[ERROR]" : "[INFO]";
+    const logMessage = `${logPrefix} ${message}`;
+    console.log(logMessage);
   });
 }
 
