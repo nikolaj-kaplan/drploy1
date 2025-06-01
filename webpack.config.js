@@ -1,11 +1,10 @@
 const path = require('path');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
 
-module.exports = [
-  // Main process
+module.exports = [  // Main process
   {
     mode: 'development',
-    entry: './src/main.ts',
+    entry: './src/main/index.ts',
     target: 'electron-main',
     devtool: 'source-map',
     module: {
