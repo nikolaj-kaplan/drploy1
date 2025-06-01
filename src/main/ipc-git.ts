@@ -71,6 +71,8 @@ export function registerGitHandlers() {
     try {
       const branch = userSettings.environmentMappings[env];
 
+      await executeGitCommand("git fetch --all");
+      await executeGitCommand("git fetch --tags --force");
       // Make sure we're on the right branch
       await executeGitCommand(`git checkout ${branch}`);
       await executeGitCommand("git pull");
@@ -82,16 +84,13 @@ export function registerGitHandlers() {
       // Check if tag exists
       const tagExists = await executeGitCommand(`git tag -l ${env}`);
       let lastDeployedCommit: string | null = null;
-      let status: string = "up-to-date";
-
-      if (tagExists.output.trim()) {
-        // Get commit for tag
-        const tagCommitResult = await executeGitCommand(`git rev-parse ${env}`);
+      let status: string = "up-to-date";      if (tagExists.output.trim()) {        // Get commit for tag
+        const tagCommitResult = await executeGitCommand(`git rev-parse ${env}^{commit}`);
         lastDeployedCommit = tagCommitResult.output.trim() || null;
 
         // Check if there are commits between tag and HEAD
         const diffResult = await executeGitCommand(
-          `git log ${env}..HEAD --oneline`
+          `git log ${env}^{commit}..HEAD --oneline`
         );
 
         if (diffResult.output.trim()) {
@@ -172,12 +171,11 @@ export function registerGitHandlers() {
 
       let commits: any[] = [];
 
-      if (tagExists.output.trim()) {
-        // Get commits between tag and HEAD
+      if (tagExists.output.trim()) {        // Get commits between tag and HEAD
         const logFormat =
           '--pretty=format:{"hash":"%h","message":"%s","author":"%an","timestamp":"%ad"}';
         const logResult = await executeGitCommand(
-          `git log ${env}..HEAD ${logFormat} --date=iso`
+          `git log ${env}^{commit}..HEAD ${logFormat} --date=iso`
         );
 
         if (logResult.output.trim()) {
@@ -228,18 +226,15 @@ export function registerGitHandlers() {
           const tagExists = await executeGitCommand(`git tag -l ${env}`);
 
           let lastDeployedCommit: string | null = null;
-          let status = "up-to-date";
-
-          if (tagExists.output.trim()) {
-            // Get commit for tag
+          let status = "up-to-date";          if (tagExists.output.trim()) {            // Get commit for tag
             const tagCommitResult = await executeGitCommand(
-              `git rev-parse ${env}`
+              `git rev-parse ${env}^{commit}`
             );
             lastDeployedCommit = tagCommitResult.output.trim() || null;
 
             // Check if there are commits between tag and HEAD
             const diffResult = await executeGitCommand(
-              `git log ${env}..HEAD --oneline`
+              `git log ${env}^{commit}..HEAD --oneline`
             );
 
             if (diffResult.output.trim()) {
@@ -301,12 +296,10 @@ export function registerGitHandlers() {
 
           // Check if tag exists
           const tagExists = await executeGitCommand(`git tag -l ${env}`);
-          let needsDeployment = false;
-
-          if (tagExists.output.trim()) {
+          let needsDeployment = false;          if (tagExists.output.trim()) {
             // Check if there are commits between tag and HEAD
             const diffResult = await executeGitCommand(
-              `git log ${env}..HEAD --oneline`
+              `git log ${env}^{commit}..HEAD --oneline`
             );
             needsDeployment = diffResult.output.trim().length > 0;
           } else {
