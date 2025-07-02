@@ -13,19 +13,25 @@ export function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1000,
     height: 800,
+    show: false, // Don't show until ready
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false,
+      devTools: false, // Disable developer tools
     },
   });
+  
+  // Maximize the window
+  mainWindow.maximize();
+  
+  // Show the window after it's ready
+  mainWindow.show();
   
   // Load the index.html of the app built by Webpack
   mainWindow.loadFile(path.join(__dirname, "index.html")); 
   
-  // Open DevTools in development
-  if (process.env.NODE_ENV === "development") {
-    mainWindow.webContents.openDevTools();
-  }
+  // Remove the development DevTools opening
+  // Developer tools are now disabled via webPreferences.devTools: false
 
   // Emitted when the window is closed
   mainWindow.on("closed", () => {

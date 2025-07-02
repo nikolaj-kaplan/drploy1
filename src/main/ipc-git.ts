@@ -71,14 +71,11 @@ export function registerGitHandlers() {
     try {
       const branch = userSettings.environmentMappings[env];
 
-      await executeGitCommand("git fetch --all");
-      await executeGitCommand("git fetch --tags --force");
-      // Make sure we're on the right branch
-      await executeGitCommand(`git checkout ${branch}`);
-      await executeGitCommand("git pull");
+      // Single fetch operation for all remotes and tags
+      await executeGitCommand("git fetch --all --tags --force");
 
-      // Get current HEAD commit
-      const headResult = await executeGitCommand("git rev-parse HEAD");
+      // Get current HEAD commit of the remote branch (no checkout needed)
+      const headResult = await executeGitCommand(`git rev-parse origin/${branch}`);
       const headCommit = headResult.output.trim();
 
       // Check if tag exists
@@ -88,20 +85,22 @@ export function registerGitHandlers() {
         const tagCommitResult = await executeGitCommand(`git rev-parse ${env}^^{commit}`);
         lastDeployedCommit = tagCommitResult.output.trim() || null;
 
-        // Check if there are commits between tag and HEAD
+        // Check if there are commits between tag and remote HEAD (use count for efficiency)
         const diffResult = await executeGitCommand(
-          `git log ${env}^^{commit}..HEAD --oneline`
+          `git rev-list --count ${env}^^{commit}..origin/${branch}`
         );
 
-        if (diffResult.output.trim()) {
+        const commitCount = parseInt(diffResult.output.trim()) || 0;
+        if (commitCount > 0) {
           status = "pending-commits";
         } else {
-          // Check if tag is ahead of HEAD (environment deployed from newer commit)
+          // Check if tag is ahead of remote HEAD (environment deployed from newer commit)
           const reverseResult = await executeGitCommand(
-            `git log HEAD..${env}^^{commit} --oneline`
+            `git rev-list --count origin/${branch}..${env}^^{commit}`
           );
           
-          if (reverseResult.output.trim()) {
+          const reverseCount = parseInt(reverseResult.output.trim()) || 0;
+          if (reverseCount > 0) {
             status = "ahead-of-branch";
           }
         }
@@ -133,8 +132,8 @@ export function registerGitHandlers() {
     try {
       const branch = userSettings.environmentMappings[env];
 
-      // Make sure we're on the right branch
-      await executeGitCommand("git fetch --tags --force");
+      // Fetch latest data and checkout branch
+      await executeGitCommand("git fetch --all --tags --force");
       await executeGitCommand(`git checkout ${branch}`);
       await executeGitCommand("git pull");
 
@@ -171,19 +170,18 @@ export function registerGitHandlers() {
     try {
       const branch = userSettings.environmentMappings[env];
 
-      // Make sure we're on the right branch
-      await executeGitCommand(`git checkout ${branch}`);
-      await executeGitCommand("git pull");
+      // Fetch latest data
+      await executeGitCommand("git fetch --all --tags --force");
 
       // Check if tag exists
       const tagExists = await executeGitCommand(`git tag -l ${env}`);
 
       let commits: any[] = [];
 
-      if (tagExists.output.trim()) {        // Get commits between tag and HEAD
+      if (tagExists.output.trim()) {        // Get commits between tag and remote HEAD (no checkout needed)
         // Use separate format strings for each field to avoid JSON parsing issues
         const logResult = await executeGitCommand(
-          `git log ${env}^^{commit}..HEAD --pretty=format:%H%n%h%n%s%n%an%n%ad%n--COMMIT-- --date=iso`
+          `git log ${env}^^{commit}..origin/${branch} --pretty=format:%H%n%h%n%s%n%an%n%ad%n--COMMIT-- --date=iso`
         );
 
         if (logResult.output.trim()) {
@@ -231,6 +229,9 @@ export function registerGitHandlers() {
       // Get all environment names
       const environments = Object.keys(userSettings.environmentMappings);
 
+      // Single fetch operation for all remotes and tags at the beginning
+      await executeGitCommand("git fetch --all --tags --force");
+
       // Create an array to hold all environment statuses
       const results: EnvironmentStatus[] = [];
 
@@ -239,13 +240,10 @@ export function registerGitHandlers() {
         const branch = userSettings.environmentMappings[env];
 
         try {
-          // Make sure we're on the right branch
-          await executeGitCommand(`git checkout ${branch}`);
-          await executeGitCommand("git pull");
-
-          // Get current HEAD commit
-          const headResult = await executeGitCommand("git rev-parse HEAD");
+          // Get current HEAD commit of the remote branch (no checkout needed)
+          const headResult = await executeGitCommand(`git rev-parse origin/${branch}`);
           const headCommit = headResult.output.trim();
+          
           // Check if tag exists
           const tagExists = await executeGitCommand(`git tag -l ${env}`);
 
@@ -256,20 +254,22 @@ export function registerGitHandlers() {
             );
             lastDeployedCommit = tagCommitResult.output.trim() || null;
 
-            // Check if there are commits between tag and HEAD
+            // Check if there are commits between tag and remote HEAD (use count for efficiency)
             const diffResult = await executeGitCommand(
-              `git log ${env}^^{commit}..HEAD --oneline`
+              `git rev-list --count ${env}^^{commit}..origin/${branch}`
             );
 
-            if (diffResult.output.trim()) {
+            const commitCount = parseInt(diffResult.output.trim()) || 0;
+            if (commitCount > 0) {
               status = "pending-commits";
             } else {
-              // Check if tag is ahead of HEAD (environment deployed from newer commit)
+              // Check if tag is ahead of remote HEAD (environment deployed from newer commit)
               const reverseResult = await executeGitCommand(
-                `git log HEAD..${env}^^{commit} --oneline`
+                `git rev-list --count origin/${branch}..${env}^^{commit}`
               );
               
-              if (reverseResult.output.trim()) {
+              const reverseCount = parseInt(reverseResult.output.trim()) || 0;
+              if (reverseCount > 0) {
                 status = "ahead-of-branch";
               }
             }
@@ -315,6 +315,9 @@ export function registerGitHandlers() {
       // Get all environment names
       const environments = Object.keys(userSettings.environmentMappings);
 
+      // Single fetch operation at the beginning
+      await executeGitCommand("git fetch --all --tags --force");
+
       // Create an array to hold all deployment results
       const results: DeploymentResult[] = [];
 
@@ -323,23 +326,24 @@ export function registerGitHandlers() {
         const branch = userSettings.environmentMappings[env];
 
         try {
-          // Make sure we're on the right branch
-          await executeGitCommand(`git checkout ${branch}`);
-          await executeGitCommand("git pull");
-
-          // Check if tag exists
+          // Check if tag exists (without switching branches first)
           const tagExists = await executeGitCommand(`git tag -l ${env}`);
           let needsDeployment = false;          if (tagExists.output.trim()) {
-            // Check if there are commits between tag and HEAD
+            // Check if there are commits between tag and remote HEAD (use count for efficiency)
             const diffResult = await executeGitCommand(
-              `git log ${env}^^{commit}..HEAD --oneline`
+              `git rev-list --count ${env}^^{commit}..origin/${branch}`
             );
-            needsDeployment = diffResult.output.trim().length > 0;
+            const commitCount = parseInt(diffResult.output.trim()) || 0;
+            needsDeployment = commitCount > 0;
           } else {
             needsDeployment = true;
           }
 
           if (needsDeployment) {
+            // Now switch to branch only if deployment is needed
+            await executeGitCommand(`git checkout ${branch}`);
+            await executeGitCommand("git pull");
+
             // Delete existing tag if it exists
             if (tagExists.output.trim()) {
               await executeGitCommand(`git tag -d ${env}`);
