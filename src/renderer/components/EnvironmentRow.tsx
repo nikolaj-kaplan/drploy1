@@ -6,13 +6,15 @@ interface EnvironmentRowProps {
   onStatusCheck: (env: string) => void;
   onViewDetails: (env: string) => void;
   onDeploy: (env: string) => void;
+  isOperationRunning: boolean;
 }
 
 const EnvironmentRow: React.FC<EnvironmentRowProps> = ({
   environment,
   onStatusCheck,
   onViewDetails,
-  onDeploy
+  onDeploy,
+  isOperationRunning
 }) => {
   const { name, branch, status, lastDeployedCommit, currentHeadCommit } = environment;
     const getStatusClass = () => {
@@ -30,11 +32,21 @@ const EnvironmentRow: React.FC<EnvironmentRowProps> = ({
       <td>{lastDeployedCommit ? lastDeployedCommit.substr(0, 7) : 'Not deployed'}</td>
       <td>{currentHeadCommit ? currentHeadCommit.substr(0, 7) : 'Unknown'}</td>
       <td className="actions">
-        <button onClick={() => onStatusCheck(name)}>Check</button>
-        <button onClick={() => onViewDetails(name)}>Details</button>
+        <button 
+          onClick={() => onStatusCheck(name)}
+          disabled={isOperationRunning}
+        >
+          Check
+        </button>
+        <button 
+          onClick={() => onViewDetails(name)}
+          disabled={isOperationRunning}
+        >
+          Details
+        </button>
         <button 
           onClick={() => onDeploy(name)}
-          disabled={status === 'up-to-date' || status === 'loading'}
+          disabled={isOperationRunning || status === 'up-to-date' || status === 'loading'}
           className={status === 'pending-commits' ? 'primary-button' : ''}
         >
           Deploy

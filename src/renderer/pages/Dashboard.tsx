@@ -13,6 +13,7 @@ const Dashboard: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [logOutput, setLogOutput] = useState<string>('');
   const [isLoadingCommits, setIsLoadingCommits] = useState(false);
+  const [isOperationRunning, setIsOperationRunning] = useState(false);
   const logUnsubscribe = useRef<(() => void) | null>(null);
   const logPanelRef = useRef<HTMLPreElement>(null);
   
@@ -67,6 +68,9 @@ const Dashboard: React.FC = () => {
     };
   }, []);
     const handleCheckStatus = async (envName: string) => {
+    if (isOperationRunning) return;
+    
+    setIsOperationRunning(true);
     // Update environment status to loading
     setEnvironments(prevEnvs => 
       prevEnvs.map(env => 
@@ -107,10 +111,15 @@ const Dashboard: React.FC = () => {
           env.name === envName ? { ...env, status: 'error' as 'error', error: errorMessage } : env
         )
       );
+    } finally {
+      setIsOperationRunning(false);
     }
   };
 
   const handleCheckAllStatus = async (initialEnvironments?: Environment[]) => {
+    if (isOperationRunning) return;
+    
+    setIsOperationRunning(true);
     // If initialEnvironments is provided, use it, otherwise use the current state
     const envsToCheck = initialEnvironments || environments;
     
@@ -121,20 +130,51 @@ const Dashboard: React.FC = () => {
     
     LogService.log('Checking status for all environments...');
     
-    // Use the provided environments or current state
-    if (envsToCheck.length === 0) {
-      LogService.log('No environments found to check.');
-      return;
+    try {
+      // Use the provided environments or current state
+      if (envsToCheck.length === 0) {
+        LogService.log('No environments found to check.');
+        return;
+      }
+      
+      for (const env of envsToCheck) {
+        // Don't use the individual handleCheckStatus to avoid nested operation blocking
+        const result = await GitService.getEnvironmentStatus(env.name);
+        
+        if (result.success) {
+          const envData = JSON.parse(result.output) as Environment;
+          
+          setEnvironments(prevEnvs => 
+            prevEnvs.map(envItem => 
+              envItem.name === env.name ? envData : envItem
+            )
+          );
+          
+          LogService.log(`Status for ${env.name}: ${envData.status}`);
+        } else {
+          setEnvironments(prevEnvs => 
+            prevEnvs.map(envItem => 
+              envItem.name === env.name ? { ...envItem, status: 'error' as 'error', error: result.error } : envItem
+            )
+          );
+          
+          LogService.log(`Error checking ${env.name} status: ${result.error}`, true);
+        }
+      }
+      
+      LogService.log('Completed checking status for all environments.');
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      LogService.log(`Error during bulk status check: ${errorMessage}`, true);
+    } finally {
+      setIsOperationRunning(false);
     }
-    
-    for (const env of envsToCheck) {
-      await handleCheckStatus(env.name);
-    }
-    
-    LogService.log('Completed checking status for all environments.');
   };
   
   const handleViewDetails = async (envName: string) => {
+    if (isOperationRunning) return;
+    
+    setIsOperationRunning(true);
     setSelectedEnvironment(envName);
     setIsLoadingCommits(true);
     setCommits([]);
@@ -150,10 +190,14 @@ const Dashboard: React.FC = () => {
       LogService.log(`Error loading commits for ${envName}: ${errorMessage}`, true);
     } finally {
       setIsLoadingCommits(false);
+      setIsOperationRunning(false);
     }
   };
 
   const handleDeploy = async (envName: string) => {
+    if (isOperationRunning) return;
+    
+    setIsOperationRunning(true);
     // Update environment status to loading
     setEnvironments(prevEnvs => 
       prevEnvs.map(env => 
@@ -169,12 +213,25 @@ const Dashboard: React.FC = () => {
       if (result.success) {
         LogService.log(`Successfully deployed to ${envName}.`);
         
-        // Refresh status after deployment
-        await handleCheckStatus(envName);
+        // Refresh status after deployment - call GitService directly to avoid nested operation blocking
+        const statusResult = await GitService.getEnvironmentStatus(envName);
+        if (statusResult.success) {
+          const envData = JSON.parse(statusResult.output) as Environment;
+          setEnvironments(prevEnvs => 
+            prevEnvs.map(env => 
+              env.name === envName ? envData : env
+            )
+          );
+        }
         
         // If we were showing commits for this environment, refresh them
         if (selectedEnvironment === envName) {
-          handleViewDetails(envName);
+          try {
+            const commits = await GitService.getCommitsBetweenTagAndHead(envName);
+            setCommits(commits);
+          } catch (error) {
+            LogService.log(`Error refreshing commits: ${error}`, true);
+          }
         }
       } else {
         setEnvironments(prevEnvs => 
@@ -194,24 +251,68 @@ const Dashboard: React.FC = () => {
           env.name === envName ? { ...env, status: 'error' as 'error', error: errorMessage } : env
         )
       );
+    } finally {
+      setIsOperationRunning(false);
     }
   };
   
   const handleDeployAllOutdated = async () => {
+    if (isOperationRunning) return;
+    
+    setIsOperationRunning(true);
     LogService.log('Deploying to all outdated environments...');
     
-    const outdatedEnvs = environments.filter(env => env.status === 'pending-commits');
-    
-    if (outdatedEnvs.length === 0) {
-      LogService.log('No outdated environments found.');
-      return;
+    try {
+      const outdatedEnvs = environments.filter(env => env.status === 'pending-commits');
+      
+      if (outdatedEnvs.length === 0) {
+        LogService.log('No outdated environments found.');
+        return;
+      }
+      
+      for (const env of outdatedEnvs) {
+        // Set environment to loading
+        setEnvironments(prevEnvs => 
+          prevEnvs.map(envItem => 
+            envItem.name === env.name ? { ...envItem, status: 'loading' as 'loading' } : envItem
+          )
+        );
+        
+        LogService.log(`Deploying to ${env.name} environment...`);
+        
+        const result = await GitService.deployToEnvironment(env.name);
+        
+        if (result.success) {
+          LogService.log(`Successfully deployed to ${env.name}.`);
+          
+          // Refresh status after deployment
+          const statusResult = await GitService.getEnvironmentStatus(env.name);
+          if (statusResult.success) {
+            const envData = JSON.parse(statusResult.output) as Environment;
+            setEnvironments(prevEnvs => 
+              prevEnvs.map(envItem => 
+                envItem.name === env.name ? envData : envItem
+              )
+            );
+          }
+        } else {
+          setEnvironments(prevEnvs => 
+            prevEnvs.map(envItem => 
+              envItem.name === env.name ? { ...envItem, status: 'error' as 'error', error: result.error } : envItem
+            )
+          );
+          
+          LogService.log(`Error deploying to ${env.name}: ${result.error}`, true);
+        }
+      }
+      
+      LogService.log('Completed deploying to all outdated environments.');
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      LogService.log(`Error during bulk deployment: ${errorMessage}`, true);
+    } finally {
+      setIsOperationRunning(false);
     }
-    
-    for (const env of outdatedEnvs) {
-      await handleDeploy(env.name);
-    }
-    
-    LogService.log('Completed deploying to all outdated environments.');
   };
   
   const handleClearLog = () => {
@@ -224,11 +325,23 @@ const Dashboard: React.FC = () => {
   }
     return (
     <div className="dashboard">
+      {isOperationRunning && (
+        <div className="operation-indicator">
+          <span className="operation-spinner"></span>
+          Operation in progress... Please wait.
+        </div>
+      )}
+      
       <div className="action-buttons">
-        <button onClick={() => handleCheckAllStatus()}>Check All Status</button>
+        <button 
+          onClick={() => handleCheckAllStatus()}
+          disabled={isOperationRunning}
+        >
+          Check All Status
+        </button>
         <button 
           onClick={handleDeployAllOutdated}
-          disabled={!environments.some(env => env.status === 'pending-commits')}
+          disabled={isOperationRunning || !environments.some(env => env.status === 'pending-commits')}
           className="primary-button"
         >
           Deploy All Outdated
@@ -255,6 +368,7 @@ const Dashboard: React.FC = () => {
                 onStatusCheck={handleCheckStatus}
                 onViewDetails={handleViewDetails}
                 onDeploy={handleDeploy}
+                isOperationRunning={isOperationRunning}
               />
             ))}
           </tbody>
