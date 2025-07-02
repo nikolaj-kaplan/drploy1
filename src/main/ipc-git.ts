@@ -95,6 +95,15 @@ export function registerGitHandlers() {
 
         if (diffResult.output.trim()) {
           status = "pending-commits";
+        } else {
+          // Check if tag is ahead of HEAD (environment deployed from newer commit)
+          const reverseResult = await executeGitCommand(
+            `git log HEAD..${env}^^{commit} --oneline`
+          );
+          
+          if (reverseResult.output.trim()) {
+            status = "ahead-of-branch";
+          }
         }
       } else {
         status = "pending-commits";
@@ -254,6 +263,15 @@ export function registerGitHandlers() {
 
             if (diffResult.output.trim()) {
               status = "pending-commits";
+            } else {
+              // Check if tag is ahead of HEAD (environment deployed from newer commit)
+              const reverseResult = await executeGitCommand(
+                `git log HEAD..${env}^^{commit} --oneline`
+              );
+              
+              if (reverseResult.output.trim()) {
+                status = "ahead-of-branch";
+              }
             }
           } else {
             status = "pending-commits";

@@ -21,13 +21,30 @@ const EnvironmentRow: React.FC<EnvironmentRowProps> = ({
     return `status-indicator status-indicator-${status}`;
   };
   
+  const getStatusText = () => {
+    switch (status) {
+      case 'ahead-of-branch':
+        return 'ahead of branch';
+      case 'pending-commits':
+        return 'pending commits';
+      case 'up-to-date':
+        return 'up to date';
+      case 'loading':
+        return 'loading';
+      case 'error':
+        return 'error';
+      default:
+        return status;
+    }
+  };
+
   return (
     <tr>
       <td>{name}</td>
       <td>{branch}</td>
       <td>
         <div className={getStatusClass()}></div>
-        {status}
+        {getStatusText()}
       </td>
       <td>{lastDeployedCommit ? lastDeployedCommit.substr(0, 7) : 'Not deployed'}</td>
       <td>{currentHeadCommit ? currentHeadCommit.substr(0, 7) : 'Unknown'}</td>
@@ -46,7 +63,7 @@ const EnvironmentRow: React.FC<EnvironmentRowProps> = ({
         </button>
         <button 
           onClick={() => onDeploy(name)}
-          disabled={isOperationRunning || status === 'up-to-date' || status === 'loading'}
+          disabled={isOperationRunning || status === 'up-to-date' || status === 'ahead-of-branch' || status === 'loading'}
           className={status === 'pending-commits' ? 'primary-button' : ''}
         >
           Deploy

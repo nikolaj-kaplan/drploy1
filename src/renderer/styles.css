@@ -85,6 +85,10 @@ input, select {
   background-color: red;
 }
 
+.status-indicator-ahead-of-branch {
+  background-color: orange;
+}
+
 .status-indicator-loading {
   background-color: gray;
 }

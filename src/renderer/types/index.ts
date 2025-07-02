@@ -1,7 +1,7 @@
 export interface Environment {
   name: string;
   branch: string;
-  status: 'up-to-date' | 'pending-commits' | 'loading' | 'error';
+  status: 'up-to-date' | 'pending-commits' | 'ahead-of-branch' | 'loading' | 'error';
   lastDeployedCommit: string | null;
   currentHeadCommit: string | null;
 }
