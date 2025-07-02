@@ -3,6 +3,8 @@ node_modules/
 
 # Build output
 dist/
+build/
+release/
 
 # Logs
 logs
@@ -26,3 +28,27 @@ yarn-error.log*
 # OS specific
 .DS_Store
 Thumbs.db
+
+# Electron build artifacts
+*.exe
+*.app
+*.dmg
+*.deb
+*.rpm
+*.snap
+
+# Environment and config files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Package-lock files (uncomment if you want to ignore them)
+# package-lock.json
+
+# Coverage reports
+coverage/
+
+# Optional: GitHub workflows (uncomment if you don't want to track CI/CD configs)
+# .github/workflows/

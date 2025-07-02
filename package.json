@@ -1,14 +1,18 @@
 {
-  "name": "DR-ploy",
+  "name": "dr-ploy",
   "version": "1.0.0",
   "description": "Deploy tool",
   "main": "dist/main.js",
   "scripts": {
-    "start": "npm run build ; electron .",
+    "start": "npm run build && electron .",
     "build": "webpack --config webpack.config.js",
     "watch": "webpack --config webpack.config.js --watch",
-    "dev": "npm run build ; electron --inspect=5858 .",
-    "debug": "webpack --config webpack.config.js ; electron --inspect=5858 ."
+    "dev": "npm run build && electron --inspect=5858 .",
+    "debug": "webpack --config webpack.config.js && electron --inspect=5858 .",
+    "pack": "npm run build && electron-builder --dir",
+    "dist": "npm run build && electron-builder",
+    "dist:win": "npm run build && electron-builder --win",
+    "dist:mac": "npm run build && electron-builder --mac"
   },
   "keywords": [],
   "author": "",
@@ -18,6 +22,7 @@
     "@types/react-dom": "^18.2.0",
     "css-loader": "^6.7.3",
     "electron": "^36.2.1",
+    "electron-builder": "^26.0.12",
     "electron-reload": "^2.0.0-alpha.1",
     "html-webpack-plugin": "^5.5.0",
     "style-loader": "^3.3.2",
@@ -32,5 +37,35 @@
     "fs": "^0.0.1-security",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
+  },
+  "build": {
+    "appId": "com.dr.deploy",
+    "productName": "DR Deploy",
+    "files": [
+      "dist/**/*",
+      "node_modules/**/*"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        "zip"
+      ]
+    },
+    "win": {
+      "target": [
+        "portable"
+      ]
+    },
+    "forceCodeSigning": false,
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Development"
+    }
   }
 }

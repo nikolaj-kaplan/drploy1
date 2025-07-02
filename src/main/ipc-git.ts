@@ -172,31 +172,46 @@ export function registerGitHandlers() {
       let commits: any[] = [];
 
       if (tagExists.output.trim()) {        // Get commits between tag and HEAD
-        const logFormat =
-          '--pretty=format:{"hash":"%h","message":"%s","author":"%an","timestamp":"%ad"}';
+        // Use separate format strings for each field to avoid JSON parsing issues
         const logResult = await executeGitCommand(
-          `git log ${env}^^{commit}..HEAD ${logFormat} --date=iso`
+          `git log ${env}^^{commit}..HEAD --pretty=format:%H%n%h%n%s%n%an%n%ad%n--COMMIT-- --date=iso`
         );
 
         if (logResult.output.trim()) {
-          // Parse the JSON objects
-          commits = logResult.output
-            .split("\n")
-            .filter((line) => line.trim())
-            .map((line) => {
-              const jsonString = line
-                // 1) quote the keys
-                .replace(/([{,])(\w+):/g, '$1"$2":')
-                // 2) quote unquoted values (up to the next , or })
-                .replace(/:(?!")([^,}]+)(?=[,}])/g, ':"$1"');
-              return jsonString;
-            })
-            .map((line) => JSON.parse(line));
+          // Split the output by the commit delimiter and process each commit
+          const commitChunks = logResult.output.split('--COMMIT--').filter(chunk => chunk.trim());
+          
+          commits = commitChunks.map(chunk => {
+            try {
+              const lines = chunk.trim().split('\n');
+              if (lines.length >= 5) {
+                return {
+                  fullHash: lines[0].trim(),
+                  hash: lines[1].trim(),
+                  message: lines[2].trim(),
+                  author: lines[3].trim(),
+                  timestamp: lines[4].trim()
+                };
+              } else {
+                throw new Error(`Invalid commit chunk format: ${chunk}`);
+              }
+            } catch (err) {
+              const errorMessage = err instanceof Error ? err.message : String(err);
+              logMessage(`Error parsing commit: ${errorMessage}`, true);
+              return {
+                hash: "unknown",
+                message: `Error parsing commit`,
+                author: "unknown",
+                timestamp: new Date().toISOString()
+              };
+            }
+          });
         }
       }
 
       event.reply(`${env}-commits-retrieved`, commits);
     } catch (error) {
+      logMessage(`Error retrieving commits for ${env}: ${error}`, true);
       event.reply(`${env}-commits-retrieved`, [] as any[]);
     }
   });
