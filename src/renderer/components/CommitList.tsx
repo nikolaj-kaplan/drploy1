@@ -4,9 +4,55 @@ import { Commit } from '../types';
 interface CommitListProps {
   commits: Commit[];
   loading: boolean;
+  repositoryUrl?: string;
 }
 
-const CommitList: React.FC<CommitListProps> = ({ commits, loading }) => {
+const CommitList: React.FC<CommitListProps> = ({ commits, loading, repositoryUrl }) => {
+  // Function to parse PR number from merge commit message
+  const parsePRFromMessage = (message: string): number | null => {
+    const prMatch = message.match(/Merge pull request #(\d+)/);
+    return prMatch ? parseInt(prMatch[1], 10) : null;
+  };
+
+  // Function to handle opening external URL via Electron shell
+  const handleOpenExternal = (url: string) => {
+    const { ipcRenderer } = window.require('electron');
+    ipcRenderer.send('open-external', url);
+  };
+
+  // Function to render commit message with PR link if applicable
+  const renderCommitMessage = (commit: Commit): React.ReactNode => {
+    const prNumber = parsePRFromMessage(commit.message);
+    
+    if (prNumber && repositoryUrl) {
+      // Extract the GitHub repo path from the URL
+      const repoMatch = repositoryUrl.match(/github\.com[\/:](.+?)(?:\.git)?$/);
+      const repoPath = repoMatch ? repoMatch[1] : null;
+      
+      if (repoPath) {
+        const prUrl = `https://github.com/${repoPath}/pull/${prNumber}`;
+        
+        return (
+          <span>
+            <a 
+              href="#"
+              onClick={(e) => {
+                e.preventDefault();
+                handleOpenExternal(prUrl);
+              }}
+              className="pr-link"
+              title={`Open PR #${prNumber} on GitHub`}
+            >
+              {commit.message}
+            </a>
+          </span>
+        );
+      }
+    }
+    
+    return <span>{commit.message}</span>;
+  };
+
   if (loading) {
     return (
       <div className="commit-list-loading">
@@ -39,7 +85,7 @@ const CommitList: React.FC<CommitListProps> = ({ commits, loading }) => {
           {commits.map((commit) => (
             <tr key={commit.hash}>
               <td>{commit.hash.substring(0, 7)}</td>
-              <td className="commit-message">{commit.message}</td>
+              <td className="commit-message">{renderCommitMessage(commit)}</td>
               <td>{commit.author}</td>
               <td>{new Date(commit.timestamp).toLocaleString()}</td>
             </tr>

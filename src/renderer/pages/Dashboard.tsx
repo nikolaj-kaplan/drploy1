@@ -10,6 +10,7 @@ const Dashboard: React.FC = () => {
   const [environments, setEnvironments] = useState<Environment[]>([]);
   const [selectedEnvironment, setSelectedEnvironment] = useState<string | null>(null);
   const [commits, setCommits] = useState<Commit[]>([]);
+  const [repositoryUrl, setRepositoryUrl] = useState<string>('');
   const [isLoading, setIsLoading] = useState(true);
   const [logOutput, setLogOutput] = useState<string>('');
   const [isLoadingCommits, setIsLoadingCommits] = useState(false);
@@ -36,6 +37,9 @@ const Dashboard: React.FC = () => {
         LogService.log('Loading application settings');
         const settings = await SettingsService.loadSettings();
         if (settings && settings.environmentMappings) {
+          // Store repository URL
+          setRepositoryUrl(settings.repositoryUrl || '');
+          
           // Create initial environment objects with correctly typed status
           const initialEnvironments: Environment[] = Object.keys(settings.environmentMappings).map(envName => ({
             name: envName,
@@ -378,7 +382,7 @@ const Dashboard: React.FC = () => {
       {selectedEnvironment && (
         <div className="commit-details">
           <h2>Commits for {selectedEnvironment}</h2>
-          <CommitList commits={commits} loading={isLoadingCommits} />
+          <CommitList commits={commits} loading={isLoadingCommits} repositoryUrl={repositoryUrl} />
         </div>
       )}
         <div className="log-panel">

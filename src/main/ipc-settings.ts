@@ -1,4 +1,5 @@
 import { ipcMain } from "electron";
+import { shell } from "electron";
 import * as fs from "fs";
 import * as path from "path";
 import { UserSettings } from "./types";
@@ -75,6 +76,23 @@ export function registerFileSystemHandlers() {
       event.reply("directory-listed", { success: true, files });
     } catch (error) {
       event.reply("directory-listed", {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+}
+
+/**
+ * Register the IPC handler for shell operations (opening external links)
+ */
+export function registerShellHandlers() {
+  ipcMain.on("open-external", async (event, url: string) => {
+    try {
+      await shell.openExternal(url);
+      event.reply("external-opened", { success: true });
+    } catch (error) {
+      event.reply("external-opened", {
         success: false,
         error: error instanceof Error ? error.message : String(error),
       });

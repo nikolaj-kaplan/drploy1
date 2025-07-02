@@ -3,7 +3,7 @@ import { createWindow } from "./window";
 import { logMessage } from "./logger";
 import { ensureBaseRepoDir } from "./settings";
 import { registerGitHandlers } from "./ipc-git";
-import { registerSettingsHandlers, registerLogHandler, registerFileSystemHandlers } from "./ipc-settings";
+import { registerSettingsHandlers, registerLogHandler, registerFileSystemHandlers, registerShellHandlers } from "./ipc-settings";
 
 // This method will be called when Electron has finished initialization
 app.whenReady().then(() => {
@@ -20,6 +20,7 @@ app.whenReady().then(() => {
   registerSettingsHandlers();
   registerLogHandler();
   registerFileSystemHandlers();
+  registerShellHandlers();
 
   app.on("activate", () => {
     // On macOS it's common to re-create a window when the dock icon is clicked

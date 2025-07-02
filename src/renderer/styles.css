@@ -252,6 +252,21 @@ input, select {
   text-overflow: ellipsis;
 }
 
+.pr-link {
+  color: #0066cc;
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.pr-link:hover {
+  color: #004499;
+  text-decoration: underline;
+}
+
+.pr-link:visited {
+  color: #663399;
+}
+
 /* Log Panel */
 .log-panel {
   margin-top: 30px;
