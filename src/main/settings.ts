@@ -16,6 +16,7 @@ const store = new Store<UserSettings>({
       preprod: "release/candidate",
       prod: "master",
     },
+    recentCommitDays: 7, // Default to 7 days
   },
 });
 
@@ -29,6 +30,7 @@ export const userSettings: UserSettings = {
     preprod: "release/candidate",
     prod: "master",
   },
+  recentCommitDays: store.get("recentCommitDays") || 7,
 };
 
 /**

@@ -5,9 +5,10 @@ interface CommitListProps {
   commits: Commit[];
   loading: boolean;
   repositoryUrl?: string;
+  recentCommitDays?: number;
 }
 
-const CommitList: React.FC<CommitListProps> = ({ commits, loading, repositoryUrl }) => {
+const CommitList: React.FC<CommitListProps> = ({ commits, loading, repositoryUrl, recentCommitDays = 7 }) => {
   // Function to parse PR number from merge commit message
   const parsePRFromMessage = (message: string): number | null => {
     const prMatch = message.match(/Merge pull request #(\d+)/);
@@ -64,14 +65,23 @@ const CommitList: React.FC<CommitListProps> = ({ commits, loading, repositoryUrl
   if (commits.length === 0) {
     return (
       <div className="commit-list-empty">
-        No commits to display.
+        No commits found in the last {recentCommitDays} days.
       </div>
     );
   }
 
   return (
     <div className="commit-list">
-      <h3>Commits to Deploy</h3>
+      <h3>
+        {commits.some(c => c.deployed) ? (
+          <>
+            <span className="deployed-indicator">✓</span>
+            Recent Deployed Commits (Last {recentCommitDays} Days)
+          </>
+        ) : (
+          'Commits to Deploy'
+        )}
+      </h3>
       <table className="commit-table">
         <thead>
           <tr>
@@ -83,7 +93,7 @@ const CommitList: React.FC<CommitListProps> = ({ commits, loading, repositoryUrl
         </thead>
         <tbody>
           {commits.map((commit) => (
-            <tr key={commit.hash}>
+            <tr key={commit.hash} className={commit.deployed ? 'commit-deployed' : 'commit-pending'}>
               <td>{commit.hash.substring(0, 7)}</td>
               <td className="commit-message">{renderCommitMessage(commit)}</td>
               <td>{commit.author}</td>

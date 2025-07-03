@@ -199,6 +199,25 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onClose }) => {
         </div>
       </section>
       
+      <section className="settings-section">
+        <h2>Display Settings</h2>
+        <div className="form-group">
+          <label htmlFor="recentCommitDays">Days of Recent Commits to Show:</label>
+          <input
+            id="recentCommitDays"
+            type="number"
+            min="1"
+            max="365"
+            value={settings.recentCommitDays}
+            onChange={(e) => setSettings({ ...settings, recentCommitDays: parseInt(e.target.value) || 7 })}
+            className="form-control"
+          />
+          <small className="form-help">
+            Number of days to show recent deployed commits when an environment is up-to-date (1-365 days)
+          </small>
+        </div>
+      </section>
+      
       {error && <div className="error-message">{error}</div>}
       {message && <div className="success-message">{message}</div>}
       

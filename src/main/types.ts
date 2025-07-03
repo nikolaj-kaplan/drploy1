@@ -5,6 +5,7 @@ export interface UserSettings {
   environmentMappings: {
     [key: string]: string;
   };
+  recentCommitDays: number; // Number of days to look back for recent deployed commits
 }
 
 // Define interfaces for our environment status and deployment tracking

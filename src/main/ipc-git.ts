@@ -177,18 +177,20 @@ export function registerGitHandlers() {
       const tagExists = await executeGitCommand(`git tag -l ${env}`);
 
       let commits: any[] = [];
+      let pendingCommits: any[] = [];
+      let recentDeployedCommits: any[] = [];
 
-      if (tagExists.output.trim()) {        // Get commits between tag and remote HEAD (no checkout needed)
-        // Use separate format strings for each field to avoid JSON parsing issues
+      if (tagExists.output.trim()) {
+        // Get pending commits between tag and remote HEAD
         const logResult = await executeGitCommand(
           `git log ${env}^^{commit}..origin/${branch} --pretty=format:%H%n%h%n%s%n%an%n%ad%n--COMMIT-- --date=iso`
         );
 
         if (logResult.output.trim()) {
-          // Split the output by the commit delimiter and process each commit
+          // Parse pending commits
           const commitChunks = logResult.output.split('--COMMIT--').filter(chunk => chunk.trim());
           
-          commits = commitChunks.map(chunk => {
+          pendingCommits = commitChunks.map(chunk => {
             try {
               const lines = chunk.trim().split('\n');
               if (lines.length >= 5) {
@@ -197,7 +199,8 @@ export function registerGitHandlers() {
                   hash: lines[1].trim(),
                   message: lines[2].trim(),
                   author: lines[3].trim(),
-                  timestamp: lines[4].trim()
+                  timestamp: lines[4].trim(),
+                  deployed: false // These are pending commits
                 };
               } else {
                 throw new Error(`Invalid commit chunk format: ${chunk}`);
@@ -209,7 +212,97 @@ export function registerGitHandlers() {
                 hash: "unknown",
                 message: `Error parsing commit`,
                 author: "unknown",
-                timestamp: new Date().toISOString()
+                timestamp: new Date().toISOString(),
+                deployed: false
+              };
+            }
+          });
+        }
+
+        // Always also get recent deployed commits from the last N days
+        const recentDaysAgo = new Date();
+        recentDaysAgo.setDate(recentDaysAgo.getDate() - userSettings.recentCommitDays);
+        const sinceDate = recentDaysAgo.toISOString().split('T')[0]; // YYYY-MM-DD format
+
+        const recentCommitsResult = await executeGitCommand(
+          `git log ${env}^^{commit} --since="${sinceDate}" --pretty=format:%H%n%h%n%s%n%an%n%ad%n--COMMIT-- --date=iso`
+        );
+
+        if (recentCommitsResult.output.trim()) {
+          const commitChunks = recentCommitsResult.output.split('--COMMIT--').filter(chunk => chunk.trim());
+          
+          recentDeployedCommits = commitChunks.map(chunk => {
+            try {
+              const lines = chunk.trim().split('\n');
+              if (lines.length >= 5) {
+                return {
+                  fullHash: lines[0].trim(),
+                  hash: lines[1].trim(),
+                  message: lines[2].trim(),
+                  author: lines[3].trim(),
+                  timestamp: lines[4].trim(),
+                  deployed: true // These are already deployed commits
+                };
+              } else {
+                throw new Error(`Invalid commit chunk format: ${chunk}`);
+              }
+            } catch (err) {
+              const errorMessage = err instanceof Error ? err.message : String(err);
+              logMessage(`Error parsing commit: ${errorMessage}`, true);
+              return {
+                hash: "unknown",
+                message: `Error parsing commit`,
+                author: "unknown",
+                timestamp: new Date().toISOString(),
+                deployed: true
+              };
+            }
+          });
+        }
+
+        // Combine pending commits (always shown) with recent deployed commits
+        // Remove duplicates by hash (in case a pending commit is also in recent deployed)
+        const allHashes = new Set(pendingCommits.map(c => c.fullHash || c.hash));
+        const uniqueRecentDeployed = recentDeployedCommits.filter(c => !allHashes.has(c.fullHash || c.hash));
+        
+        commits = [...pendingCommits, ...uniqueRecentDeployed];
+      } else {
+        // No tag exists, show recent commits from branch (all considered pending)
+        const recentDaysAgo = new Date();
+        recentDaysAgo.setDate(recentDaysAgo.getDate() - userSettings.recentCommitDays);
+        const sinceDate = recentDaysAgo.toISOString().split('T')[0]; // YYYY-MM-DD format
+
+        const recentCommitsResult = await executeGitCommand(
+          `git log origin/${branch} --since="${sinceDate}" --pretty=format:%H%n%h%n%s%n%an%n%ad%n--COMMIT-- --date=iso`
+        );
+
+        if (recentCommitsResult.output.trim()) {
+          const commitChunks = recentCommitsResult.output.split('--COMMIT--').filter(chunk => chunk.trim());
+          
+          commits = commitChunks.map(chunk => {
+            try {
+              const lines = chunk.trim().split('\n');
+              if (lines.length >= 5) {
+                return {
+                  fullHash: lines[0].trim(),
+                  hash: lines[1].trim(),
+                  message: lines[2].trim(),
+                  author: lines[3].trim(),
+                  timestamp: lines[4].trim(),
+                  deployed: false // These are pending commits (no tag exists yet)
+                };
+              } else {
+                throw new Error(`Invalid commit chunk format: ${chunk}`);
+              }
+            } catch (err) {
+              const errorMessage = err instanceof Error ? err.message : String(err);
+              logMessage(`Error parsing commit: ${errorMessage}`, true);
+              return {
+                hash: "unknown",
+                message: `Error parsing commit`,
+                author: "unknown",
+                timestamp: new Date().toISOString(),
+                deployed: false
               };
             }
           });

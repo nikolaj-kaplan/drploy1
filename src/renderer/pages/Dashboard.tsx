@@ -11,6 +11,7 @@ const Dashboard: React.FC = () => {
   const [selectedEnvironment, setSelectedEnvironment] = useState<string | null>(null);
   const [commits, setCommits] = useState<Commit[]>([]);
   const [repositoryUrl, setRepositoryUrl] = useState<string>('');
+  const [recentCommitDays, setRecentCommitDays] = useState<number>(7);
   const [isLoading, setIsLoading] = useState(true);
   const [logOutput, setLogOutput] = useState<string>('');
   const [isLoadingCommits, setIsLoadingCommits] = useState(false);
@@ -37,8 +38,9 @@ const Dashboard: React.FC = () => {
         LogService.log('Loading application settings');
         const settings = await SettingsService.loadSettings();
         if (settings && settings.environmentMappings) {
-          // Store repository URL
+          // Store repository URL and settings
           setRepositoryUrl(settings.repositoryUrl || '');
+          setRecentCommitDays(settings.recentCommitDays || 7);
           
           // Create initial environment objects with correctly typed status
           const initialEnvironments: Environment[] = Object.keys(settings.environmentMappings).map(envName => ({
@@ -382,7 +384,12 @@ const Dashboard: React.FC = () => {
       {selectedEnvironment && (
         <div className="commit-details">
           <h2>Commits for {selectedEnvironment}</h2>
-          <CommitList commits={commits} loading={isLoadingCommits} repositoryUrl={repositoryUrl} />
+          <CommitList 
+            commits={commits} 
+            loading={isLoadingCommits} 
+            repositoryUrl={repositoryUrl} 
+            recentCommitDays={recentCommitDays}
+          />
         </div>
       )}
         <div className="log-panel">
