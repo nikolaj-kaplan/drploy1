@@ -260,6 +260,23 @@ const Dashboard: React.FC = () => {
     LogService.log(`Loading commit details for ${envName}...`);
     
     try {
+      // First trigger a status check for this environment
+      LogService.log(`Checking status for ${envName} environment...`);
+      const statusResult = await GitService.getEnvironmentStatus(envName);
+      
+      if (statusResult.success) {
+        const envData = JSON.parse(statusResult.output) as Environment;
+        setEnvironments(prevEnvs => 
+          prevEnvs.map(env => 
+            env.name === envName ? envData : env
+          )
+        );
+        LogService.log(`Status for ${envName}: ${envData.status}`);
+      } else {
+        LogService.log(`Error checking ${envName} status: ${statusResult.error}`, true);
+      }
+      
+      // Then load the commits
       const commits = await GitService.getCommitsBetweenTagAndHead(envName);
       setCommits(commits);
       LogService.log(`Loaded ${commits.length} commits for ${envName}.`);
@@ -412,13 +429,6 @@ const Dashboard: React.FC = () => {
           disabled={isOperationRunning}
         >
           Check All Status
-        </button>
-        <button 
-          onClick={handleDeployAllOutdated}
-          disabled={isOperationRunning || !environments.some(env => env.status === 'pending-commits')}
-          className="primary-button"
-        >
-          Deploy All Outdated
         </button>
       </div>
       
