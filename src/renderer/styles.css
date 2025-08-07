@@ -455,3 +455,140 @@ input, select {
   0% { transform: rotate(0deg); }
   100% { transform: rotate(360deg); }
 }
+
+/* Dangerous Production Confirmation Modal */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+  animation: modalFadeIn 0.3s ease-out;
+}
+
+@keyframes modalFadeIn {
+  0% { opacity: 0; }
+  100% { opacity: 1; }
+}
+
+.production-confirm-modal {
+  background-color: #1a1a1a;
+  border: 3px solid #ff4444;
+  border-radius: 12px;
+  padding: 30px;
+  max-width: 500px;
+  width: 90%;
+  box-shadow: 0 20px 60px rgba(255, 68, 68, 0.4), 
+              0 0 40px rgba(255, 68, 68, 0.2),
+              inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  animation: modalSlideIn 0.4s ease-out;
+  text-align: center;
+}
+
+@keyframes modalSlideIn {
+  0% { 
+    transform: translateY(-50px) scale(0.9);
+    opacity: 0;
+  }
+  100% { 
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+}
+
+.production-confirm-modal .warning-icon {
+  font-size: 48px;
+  color: #ff4444;
+  margin-bottom: 20px;
+  animation: warningPulse 2s infinite;
+}
+
+@keyframes warningPulse {
+  0%, 100% { 
+    color: #ff4444;
+    text-shadow: 0 0 10px rgba(255, 68, 68, 0.5);
+  }
+  50% { 
+    color: #ff6666;
+    text-shadow: 0 0 20px rgba(255, 68, 68, 0.8);
+  }
+}
+
+.production-confirm-modal h2 {
+  color: #ff4444;
+  font-size: 24px;
+  font-weight: 700;
+  margin: 0 0 15px 0;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.production-confirm-modal p {
+  color: #ffffff;
+  font-size: 16px;
+  line-height: 1.5;
+  margin: 0 0 25px 0;
+}
+
+.production-confirm-modal .env-name {
+  color: #ff6666;
+  font-weight: bold;
+  font-size: 18px;
+  text-transform: uppercase;
+}
+
+.production-confirm-modal .modal-buttons {
+  display: flex;
+  gap: 15px;
+  justify-content: center;
+  margin-top: 30px;
+}
+
+.production-confirm-modal .danger-button {
+  background: linear-gradient(135deg, #ff4444, #cc0000);
+  color: white;
+  border: 2px solid #ff6666;
+  padding: 12px 24px;
+  font-size: 16px;
+  font-weight: 600;
+  border-radius: 8px;
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 15px rgba(255, 68, 68, 0.3);
+}
+
+.production-confirm-modal .danger-button:hover {
+  background: linear-gradient(135deg, #ff6666, #ff0000);
+  border-color: #ff8888;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(255, 68, 68, 0.4);
+}
+
+.production-confirm-modal .safe-button {
+  background: linear-gradient(135deg, #555555, #333333);
+  color: white;
+  border: 2px solid #777777;
+  padding: 12px 24px;
+  font-size: 16px;
+  font-weight: 600;
+  border-radius: 8px;
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+}
+
+.production-confirm-modal .safe-button:hover {
+  background: linear-gradient(135deg, #666666, #444444);
+  border-color: #888888;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+}

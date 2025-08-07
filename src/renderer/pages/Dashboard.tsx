@@ -5,6 +5,7 @@ import { SettingsService } from '../services/SettingsService';
 import { LogService } from '../services/LogService';
 import EnvironmentRow from '../components/EnvironmentRow';
 import CommitList from '../components/CommitList';
+import ProductionConfirmModal from '../components/ProductionConfirmModal';
 
 const Dashboard: React.FC = () => {
   const [environments, setEnvironments] = useState<Environment[]>([]);
@@ -16,6 +17,9 @@ const Dashboard: React.FC = () => {
   const [logOutput, setLogOutput] = useState<string>('');
   const [isLoadingCommits, setIsLoadingCommits] = useState(false);
   const [isOperationRunning, setIsOperationRunning] = useState(false);
+  const [showProductionModal, setShowProductionModal] = useState(false);
+  const [pendingDeployEnv, setPendingDeployEnv] = useState<string | null>(null);
+  const [pendingBulkDeploy, setPendingBulkDeploy] = useState(false);
   const logUnsubscribe = useRef<(() => void) | null>(null);
   const logPanelRef = useRef<HTMLPreElement>(null);
   
@@ -73,6 +77,74 @@ const Dashboard: React.FC = () => {
       }
     };
   }, []);
+
+  // Helper function to check if environment is production
+  const isProductionEnvironment = (envName: string): boolean => {
+    const normalized = envName.toLowerCase();
+    return normalized === 'prod' || normalized === 'production';
+  };
+
+  // Helper function to actually perform deployment
+  const performDeployment = async (envName: string) => {
+    setIsOperationRunning(true);
+    // Update environment status to loading
+    setEnvironments(prevEnvs => 
+      prevEnvs.map(env => 
+        env.name === envName ? { ...env, status: 'loading' as 'loading' } : env
+      )
+    );
+    
+    LogService.log(`Deploying to ${envName} environment...`);
+    
+    try {
+      const result = await GitService.deployToEnvironment(envName);
+      
+      if (result.success) {
+        LogService.log(`Successfully deployed to ${envName}.`);
+        
+        // Refresh status after deployment - call GitService directly to avoid nested operation blocking
+        const statusResult = await GitService.getEnvironmentStatus(envName);
+        if (statusResult.success) {
+          const envData = JSON.parse(statusResult.output) as Environment;
+          setEnvironments(prevEnvs => 
+            prevEnvs.map(env => 
+              env.name === envName ? envData : env
+            )
+          );
+        }
+        
+        // If we were showing commits for this environment, refresh them
+        if (selectedEnvironment === envName) {
+          try {
+            const commits = await GitService.getCommitsBetweenTagAndHead(envName);
+            setCommits(commits);
+          } catch (error) {
+            LogService.log(`Error refreshing commits: ${error}`, true);
+          }
+        }
+      } else {
+        setEnvironments(prevEnvs => 
+          prevEnvs.map(env => 
+            env.name === envName ? { ...env, status: 'error' as 'error', error: result.error } : env
+          )
+        );
+        
+        LogService.log(`Error deploying to ${envName}: ${result.error}`, true);
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      LogService.log(`Error deploying to ${envName}: ${errorMessage}`, true);
+      
+      setEnvironments(prevEnvs => 
+        prevEnvs.map(env => 
+          env.name === envName ? { ...env, status: 'error' as 'error', error: errorMessage } : env
+        )
+      );
+    } finally {
+      setIsOperationRunning(false);
+    }
+  };
+
     const handleCheckStatus = async (envName: string) => {
     if (isOperationRunning) return;
     
@@ -203,79 +275,52 @@ const Dashboard: React.FC = () => {
   const handleDeploy = async (envName: string) => {
     if (isOperationRunning) return;
     
-    setIsOperationRunning(true);
-    // Update environment status to loading
-    setEnvironments(prevEnvs => 
-      prevEnvs.map(env => 
-        env.name === envName ? { ...env, status: 'loading' as 'loading' } : env
-      )
-    );
-    
-    LogService.log(`Deploying to ${envName} environment...`);
-    
-    try {
-      const result = await GitService.deployToEnvironment(envName);
-      
-      if (result.success) {
-        LogService.log(`Successfully deployed to ${envName}.`);
-        
-        // Refresh status after deployment - call GitService directly to avoid nested operation blocking
-        const statusResult = await GitService.getEnvironmentStatus(envName);
-        if (statusResult.success) {
-          const envData = JSON.parse(statusResult.output) as Environment;
-          setEnvironments(prevEnvs => 
-            prevEnvs.map(env => 
-              env.name === envName ? envData : env
-            )
-          );
-        }
-        
-        // If we were showing commits for this environment, refresh them
-        if (selectedEnvironment === envName) {
-          try {
-            const commits = await GitService.getCommitsBetweenTagAndHead(envName);
-            setCommits(commits);
-          } catch (error) {
-            LogService.log(`Error refreshing commits: ${error}`, true);
-          }
-        }
-      } else {
-        setEnvironments(prevEnvs => 
-          prevEnvs.map(env => 
-            env.name === envName ? { ...env, status: 'error' as 'error', error: result.error } : env
-          )
-        );
-        
-        LogService.log(`Error deploying to ${envName}: ${result.error}`, true);
-      }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      LogService.log(`Error deploying to ${envName}: ${errorMessage}`, true);
-      
-      setEnvironments(prevEnvs => 
-        prevEnvs.map(env => 
-          env.name === envName ? { ...env, status: 'error' as 'error', error: errorMessage } : env
-        )
-      );
-    } finally {
-      setIsOperationRunning(false);
+    // Check if this is a production environment
+    if (isProductionEnvironment(envName)) {
+      // Show confirmation modal for production deployments
+      setPendingDeployEnv(envName);
+      setShowProductionModal(true);
+      return;
     }
+    
+    // For non-production environments, deploy directly
+    await performDeployment(envName);
   };
   
   const handleDeployAllOutdated = async () => {
     if (isOperationRunning) return;
     
+    const outdatedEnvs = environments.filter(env => env.status === 'pending-commits');
+    
+    if (outdatedEnvs.length === 0) {
+      LogService.log('No outdated environments found.');
+      return;
+    }
+    
+    // Check if any of the outdated environments are production environments
+    const hasProductionEnv = outdatedEnvs.some(env => isProductionEnvironment(env.name));
+    
+    if (hasProductionEnv) {
+      // Show confirmation modal for bulk deployment including production
+      const productionEnvNames = outdatedEnvs
+        .filter(env => isProductionEnvironment(env.name))
+        .map(env => env.name)
+        .join(', ');
+      setPendingDeployEnv(`Production environments: ${productionEnvNames}`);
+      setPendingBulkDeploy(true);
+      setShowProductionModal(true);
+      return;
+    }
+    
+    // For bulk deployment without production environments, deploy directly
+    await performBulkDeployment(outdatedEnvs);
+  };
+
+  const performBulkDeployment = async (outdatedEnvs: Environment[]) => {
     setIsOperationRunning(true);
     LogService.log('Deploying to all outdated environments...');
     
     try {
-      const outdatedEnvs = environments.filter(env => env.status === 'pending-commits');
-      
-      if (outdatedEnvs.length === 0) {
-        LogService.log('No outdated environments found.');
-        return;
-      }
-      
       for (const env of outdatedEnvs) {
         // Set environment to loading
         setEnvironments(prevEnvs => 
@@ -319,6 +364,29 @@ const Dashboard: React.FC = () => {
     } finally {
       setIsOperationRunning(false);
     }
+  };
+
+  const handleProductionConfirm = async () => {
+    setShowProductionModal(false);
+    
+    if (pendingBulkDeploy) {
+      // Handle bulk deployment with production environments
+      const outdatedEnvs = environments.filter(env => env.status === 'pending-commits');
+      await performBulkDeployment(outdatedEnvs);
+      setPendingBulkDeploy(false);
+    } else if (pendingDeployEnv && !pendingDeployEnv.includes(':')) {
+      // Handle single environment deployment
+      await performDeployment(pendingDeployEnv);
+    }
+    
+    setPendingDeployEnv(null);
+  };
+
+  const handleProductionCancel = () => {
+    setShowProductionModal(false);
+    setPendingDeployEnv(null);
+    setPendingBulkDeploy(false);
+    LogService.log('Production deployment cancelled by user.');
   };
   
   const handleClearLog = () => {
@@ -399,6 +467,13 @@ const Dashboard: React.FC = () => {
         </div>
         <pre ref={logPanelRef}>{logOutput}</pre>
       </div>
+      
+      <ProductionConfirmModal
+        environmentName={pendingDeployEnv || ''}
+        isVisible={showProductionModal}
+        onConfirm={handleProductionConfirm}
+        onCancel={handleProductionCancel}
+      />
     </div>
   );
 };
