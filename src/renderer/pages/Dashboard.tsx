@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Environment, Commit } from '../types';
+import { Environment, Commit, AppSettings } from '../types';
 import { GitService } from '../services/GitService';
 import { SettingsService } from '../services/SettingsService';
 import { LogService } from '../services/LogService';
@@ -9,6 +9,7 @@ import ProductionConfirmModal from '../components/ProductionConfirmModal';
 
 const Dashboard: React.FC = () => {
   const [environments, setEnvironments] = useState<Environment[]>([]);
+  const [disabledEnvironments, setDisabledEnvironments] = useState<string[]>([]);
   const [selectedEnvironment, setSelectedEnvironment] = useState<string | null>(null);
   const [commits, setCommits] = useState<Commit[]>([]);
   const [repositoryUrl, setRepositoryUrl] = useState<string>('');
@@ -40,25 +41,20 @@ const Dashboard: React.FC = () => {
     const loadSettings = async () => {
       try {
         LogService.log('Loading application settings');
-        const settings = await SettingsService.loadSettings();
+        const settings: AppSettings | null = await SettingsService.loadSettings();
         if (settings && settings.environmentMappings) {
-          // Store repository URL and settings
           setRepositoryUrl(settings.repositoryUrl || '');
           setRecentCommitDays(settings.recentCommitDays || 7);
-          
-          // Create initial environment objects with correctly typed status
+          setDisabledEnvironments(settings.disabledEnvironments || []);
           const initialEnvironments: Environment[] = Object.keys(settings.environmentMappings).map(envName => ({
             name: envName,
             branch: settings.environmentMappings[envName],
-            status: 'loading' as 'loading', // Explicit type assertion for the union type
+            status: 'loading' as 'loading',
             lastDeployedCommit: null,
             currentHeadCommit: null
           }));
-          
           setEnvironments(initialEnvironments);
           setIsLoading(false);
-          
-          // Check status for all environments - pass initialEnvironments directly
           handleCheckAllStatus(initialEnvironments);
         }
       } catch (error) {
@@ -67,7 +63,6 @@ const Dashboard: React.FC = () => {
         setIsLoading(false);
       }
     };
-    
     loadSettings();
 
     // Cleanup subscription when component unmounts
@@ -453,6 +448,7 @@ const Dashboard: React.FC = () => {
                 onViewDetails={handleViewDetails}
                 onDeploy={handleDeploy}
                 isOperationRunning={isOperationRunning}
+                isDeployDisabled={disabledEnvironments.includes(env.name)}
               />
             ))}
           </tbody>

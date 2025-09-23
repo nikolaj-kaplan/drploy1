@@ -7,6 +7,7 @@ interface EnvironmentRowProps {
   onViewDetails: (env: string) => void;
   onDeploy: (env: string) => void;
   isOperationRunning: boolean;
+  isDeployDisabled?: boolean;
 }
 
 const EnvironmentRow: React.FC<EnvironmentRowProps> = ({
@@ -14,7 +15,8 @@ const EnvironmentRow: React.FC<EnvironmentRowProps> = ({
   onStatusCheck,
   onViewDetails,
   onDeploy,
-  isOperationRunning
+  isOperationRunning,
+  isDeployDisabled
 }) => {
   const { name, branch, status, lastDeployedCommit, currentHeadCommit } = environment;
     const getStatusClass = () => {
@@ -63,8 +65,9 @@ const EnvironmentRow: React.FC<EnvironmentRowProps> = ({
         </button>
         <button 
           onClick={() => onDeploy(name)}
-          disabled={isOperationRunning || status === 'up-to-date' || status === 'ahead-of-branch' || status === 'loading'}
+          disabled={isOperationRunning || status === 'up-to-date' || status === 'ahead-of-branch' || status === 'loading' || isDeployDisabled}
           className={status === 'pending-commits' ? 'primary-button' : ''}
+          title={isDeployDisabled ? 'Deploy disabled for this environment' : undefined}
         >
           Deploy
         </button>

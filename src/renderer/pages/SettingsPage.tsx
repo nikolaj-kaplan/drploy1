@@ -159,7 +159,26 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onClose }) => {
                     className="branch-input"
                   />
                 </td>
-                <td>
+                <td style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <input
+                      type="checkbox"
+                      checked={settings.disabledEnvironments?.includes(env) || false}
+                      onChange={e => {
+                        setSettings(s => {
+                          if (!s) return s;
+                          const disabled = new Set(s.disabledEnvironments || []);
+                          if (e.target.checked) {
+                            disabled.add(env);
+                          } else {
+                            disabled.delete(env);
+                          }
+                          return { ...s, disabledEnvironments: Array.from(disabled) };
+                        });
+                      }}
+                    />
+                    Disable Deploy
+                  </label>
                   <button 
                     onClick={() => handleDeleteMapping(env)}
                     className="delete-button"

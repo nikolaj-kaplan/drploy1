@@ -19,6 +19,7 @@ export interface AppSettings {
   repositoryUrl: string;
   environmentMappings: Record<string, string>; // environment name -> branch name
   recentCommitDays: number; // Number of days to look back for recent deployed commits
+  disabledEnvironments?: string[]; // List of environment names where deploy is disabled
 }
 
 export interface CommandResult {
