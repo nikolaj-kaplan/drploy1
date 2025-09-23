@@ -3,20 +3,24 @@ import { Environment } from '../types';
 
 interface EnvironmentRowProps {
   environment: Environment;
-  onStatusCheck: (env: string) => void;
-  onViewDetails: (env: string) => void;
+  isSelected: boolean;
+  onSelect: (env: string) => void;
+  onRefresh: (env: string) => void;
   onDeploy: (env: string) => void;
   isOperationRunning: boolean;
   isDeployDisabled?: boolean;
+  missingCommitsCount: number;
 }
 
 const EnvironmentRow: React.FC<EnvironmentRowProps> = ({
   environment,
-  onStatusCheck,
-  onViewDetails,
+  isSelected,
+  onSelect,
+  onRefresh,
   onDeploy,
   isOperationRunning,
-  isDeployDisabled
+  isDeployDisabled,
+  missingCommitsCount
 }) => {
   const { name, branch, status, lastDeployedCommit, currentHeadCommit } = environment;
     const getStatusClass = () => {
@@ -41,27 +45,22 @@ const EnvironmentRow: React.FC<EnvironmentRowProps> = ({
   };
 
   return (
-    <tr>
+  <tr className={(isSelected ? 'selected-environment-row ' : '') + 'pointer-row'} onClick={() => onSelect(name)}>
       <td>{name}</td>
       <td>{branch}</td>
       <td>
         <div className={getStatusClass()}></div>
         {getStatusText()}
       </td>
-      <td>{lastDeployedCommit ? lastDeployedCommit.substr(0, 7) : 'Not deployed'}</td>
+  <td>{missingCommitsCount}</td>
+  <td>{lastDeployedCommit ? lastDeployedCommit.substr(0, 7) : 'Not deployed'}</td>
       <td>{currentHeadCommit ? currentHeadCommit.substr(0, 7) : 'Unknown'}</td>
-      <td className="actions">
+      <td className="actions" onClick={e => e.stopPropagation()}>
         <button 
-          onClick={() => onStatusCheck(name)}
+          onClick={() => onRefresh(name)}
           disabled={isOperationRunning}
         >
-          Check
-        </button>
-        <button 
-          onClick={() => onViewDetails(name)}
-          disabled={isOperationRunning}
-        >
-          Details
+          Refresh
         </button>
         <button 
           onClick={() => onDeploy(name)}

@@ -5,10 +5,9 @@ interface CommitListProps {
   commits: Commit[];
   loading: boolean;
   repositoryUrl?: string;
-  recentCommitDays?: number;
 }
 
-const CommitList: React.FC<CommitListProps> = ({ commits, loading, repositoryUrl, recentCommitDays = 7 }) => {
+const CommitList: React.FC<CommitListProps> = ({ commits, loading, repositoryUrl }) => {
   // Function to parse PR number from merge commit message
   const parsePRFromMessage = (message: string): number | null => {
     const prMatch = message.match(/Merge pull request #(\d+)/);
@@ -54,34 +53,35 @@ const CommitList: React.FC<CommitListProps> = ({ commits, loading, repositoryUrl
     return <span>{commit.message}</span>;
   };
 
-  if (loading) {
-    return (
-      <div className="commit-list-loading">
-        Loading commits...
-      </div>
-    );
-  }
+  const pendingCommits = commits.filter(c => !c.deployed);
+  const deployedCommits = commits.filter(c => c.deployed);
 
   if (commits.length === 0) {
-    return (
-      <div className="commit-list-empty">
-        No commits found in the last {recentCommitDays} days.
-      </div>
-    );
+    // If loading, show loading. If not loading, check for deployedCommits
+    if (loading) {
+      return (
+        <div className="commit-list-loading">
+          Loading commits...
+        </div>
+      );
+    } else if (pendingCommits.length == 0) {
+      return (
+        <div className="commit-list">
+          <h3>0 commits to deploy</h3>
+        </div>
+      );
+    } else {
+      return (
+        <div className="commit-list">
+          <h3>No commit history found.</h3>
+        </div>
+      );
+    }
   }
 
   return (
     <div className="commit-list">
-      <h3>
-        {commits.some(c => c.deployed) ? (
-          <>
-            <span className="deployed-indicator">✓</span>
-            Recent Deployed Commits (Last {recentCommitDays} Days)
-          </>
-        ) : (
-          'Commits to Deploy'
-        )}
-      </h3>
+      <h3>Commits</h3>
       <table className="commit-table">
         <thead>
           <tr>

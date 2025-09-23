@@ -159,8 +159,8 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onClose }) => {
                     className="branch-input"
                   />
                 </td>
-                <td style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <td className="flex-table-cell">
+                  <label className="flex-label">
                     <input
                       type="checkbox"
                       checked={settings.disabledEnvironments?.includes(env) || false}

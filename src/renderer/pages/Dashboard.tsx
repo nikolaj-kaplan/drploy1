@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Environment, Commit, AppSettings } from '../types';
+import { Environment, Commit, AppSettings, EnvironmentInfo } from '../types';
 import { GitService } from '../services/GitService';
 import { SettingsService } from '../services/SettingsService';
 import { LogService } from '../services/LogService';
@@ -11,9 +11,14 @@ const Dashboard: React.FC = () => {
   const [environments, setEnvironments] = useState<Environment[]>([]);
   const [disabledEnvironments, setDisabledEnvironments] = useState<string[]>([]);
   const [selectedEnvironment, setSelectedEnvironment] = useState<string | null>(null);
-  const [commits, setCommits] = useState<Commit[]>([]);
+  // Store commits per environment for instant switching
+  const [commitsByEnv, setCommitsByEnv] = useState<Record<string, Commit[]>>({});
+  const [commits, setCommits] = useState<Commit[]>([]); // for currently selected env
   const [repositoryUrl, setRepositoryUrl] = useState<string>('');
-  const [recentCommitDays, setRecentCommitDays] = useState<number>(7);
+  // Remove recentCommitDays, not used anymore
+  // For deployed commit pagination
+  const [deployedCommitsShown, setDeployedCommitsShown] = useState(10);
+  const [hasMoreDeployedCommits, setHasMoreDeployedCommits] = useState(true);
   const [isLoading, setIsLoading] = useState(true);
   const [logOutput, setLogOutput] = useState<string>('');
   const [isLoadingCommits, setIsLoadingCommits] = useState(false);
@@ -44,7 +49,7 @@ const Dashboard: React.FC = () => {
         const settings: AppSettings | null = await SettingsService.loadSettings();
         if (settings && settings.environmentMappings) {
           setRepositoryUrl(settings.repositoryUrl || '');
-          setRecentCommitDays(settings.recentCommitDays || 7);
+          // Removed recentCommitDays logic
           setDisabledEnvironments(settings.disabledEnvironments || []);
           const initialEnvironments: Environment[] = Object.keys(settings.environmentMappings).map(envName => ({
             name: envName,
@@ -55,6 +60,13 @@ const Dashboard: React.FC = () => {
           }));
           setEnvironments(initialEnvironments);
           setIsLoading(false);
+          // Always fetch status and commits for the first environment (or selected)
+          if (initialEnvironments.length > 0) {
+            const firstEnv = initialEnvironments[0].name;
+            setSelectedEnvironment(firstEnv);
+            await handleRefreshEnvironment(firstEnv);
+          }
+          // Also check all statuses in the background
           handleCheckAllStatus(initialEnvironments);
         }
       } catch (error) {
@@ -79,57 +91,71 @@ const Dashboard: React.FC = () => {
     return normalized === 'prod' || normalized === 'production';
   };
 
-  // Helper function to actually perform deployment
+  // Select environment and show cached commits (or empty if not loaded yet)
+  const handleSelectEnvironment = (envName: string) => {
+    setSelectedEnvironment(envName);
+    setCommits(commitsByEnv[envName] || []);
+    setDeployedCommitsShown(10);
+    setHasMoreDeployedCommits(true);
+  };
+
+  // Fetch all info for a single environment (status, SHAs, commits)
+  const handleRefreshEnvironment = async (envName: string) => {
+    if (isOperationRunning) return;
+    setIsOperationRunning(true);
+    setEnvironments(prevEnvs => prevEnvs.map(env => env.name === envName ? { ...env, status: 'loading' as 'loading' } : env));
+    setIsLoadingCommits(true);
+    setDeployedCommitsShown(10);
+    setHasMoreDeployedCommits(true);
+    LogService.log(`Refreshing all info for ${envName}...`);
+    try {
+      const info: EnvironmentInfo = await GitService.getEnvironmentInfo(envName);
+      setEnvironments(prevEnvs => prevEnvs.map(env => env.name === envName ? {
+        name: info.name,
+        branch: info.branch,
+        status: info.status,
+        lastDeployedCommit: info.lastDeployedCommit,
+        currentHeadCommit: info.currentHeadCommit
+      } : env));
+      setCommitsByEnv(prev => ({ ...prev, [envName]: info.commits }));
+      // Always update commits for selected environment after refresh
+      if (selectedEnvironment === envName || !selectedEnvironment) setCommits(info.commits);
+      // Always allow loading more after refresh
+      setHasMoreDeployedCommits(true);
+      LogService.log(`Loaded info for ${envName}. Status: ${info.status}, Commits: ${info.commits.length}`);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      LogService.log(`Error loading info for ${envName}: ${errorMessage}`, true);
+    } finally {
+      setIsLoadingCommits(false);
+      setIsOperationRunning(false);
+    }
+  };
   const performDeployment = async (envName: string) => {
     setIsOperationRunning(true);
-    // Update environment status to loading
     setEnvironments(prevEnvs => 
       prevEnvs.map(env => 
         env.name === envName ? { ...env, status: 'loading' as 'loading' } : env
       )
     );
-    
     LogService.log(`Deploying to ${envName} environment...`);
-    
     try {
       const result = await GitService.deployToEnvironment(envName);
-      
       if (result.success) {
         LogService.log(`Successfully deployed to ${envName}.`);
-        
-        // Refresh status after deployment - call GitService directly to avoid nested operation blocking
-        const statusResult = await GitService.getEnvironmentStatus(envName);
-        if (statusResult.success) {
-          const envData = JSON.parse(statusResult.output) as Environment;
-          setEnvironments(prevEnvs => 
-            prevEnvs.map(env => 
-              env.name === envName ? envData : env
-            )
-          );
-        }
-        
-        // If we were showing commits for this environment, refresh them
-        if (selectedEnvironment === envName) {
-          try {
-            const commits = await GitService.getCommitsBetweenTagAndHead(envName);
-            setCommits(commits);
-          } catch (error) {
-            LogService.log(`Error refreshing commits: ${error}`, true);
-          }
-        }
+        // Refresh status and commits after deployment
+        await handleRefreshEnvironment(envName);
       } else {
         setEnvironments(prevEnvs => 
           prevEnvs.map(env => 
             env.name === envName ? { ...env, status: 'error' as 'error', error: result.error } : env
           )
         );
-        
         LogService.log(`Error deploying to ${envName}: ${result.error}`, true);
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       LogService.log(`Error deploying to ${envName}: ${errorMessage}`, true);
-      
       setEnvironments(prevEnvs => 
         prevEnvs.map(env => 
           env.name === envName ? { ...env, status: 'error' as 'error', error: errorMessage } : env
@@ -191,98 +217,46 @@ const Dashboard: React.FC = () => {
 
   const handleCheckAllStatus = async (initialEnvironments?: Environment[]) => {
     if (isOperationRunning) return;
-    
     setIsOperationRunning(true);
-    // If initialEnvironments is provided, use it, otherwise use the current state
     const envsToCheck = initialEnvironments || environments;
-    
-    // Set all environments to loading
-    setEnvironments(prevEnvs => 
-      prevEnvs.map(env => ({ ...env, status: 'loading' as 'loading' }))
-    );
-    
-    LogService.log('Checking status for all environments...');
-    
+    setEnvironments(prevEnvs => prevEnvs.map(env => ({ ...env, status: 'loading' as 'loading' })));
+    LogService.log('Checking all info for all environments...');
     try {
-      // Use the provided environments or current state
       if (envsToCheck.length === 0) {
         LogService.log('No environments found to check.');
         return;
       }
-      
       for (const env of envsToCheck) {
-        // Don't use the individual handleCheckStatus to avoid nested operation blocking
-        const result = await GitService.getEnvironmentStatus(env.name);
-        
-        if (result.success) {
-          const envData = JSON.parse(result.output) as Environment;
-          
-          setEnvironments(prevEnvs => 
-            prevEnvs.map(envItem => 
-              envItem.name === env.name ? envData : envItem
-            )
-          );
-          
-          LogService.log(`Status for ${env.name}: ${envData.status}`);
-        } else {
-          setEnvironments(prevEnvs => 
-            prevEnvs.map(envItem => 
-              envItem.name === env.name ? { ...envItem, status: 'error' as 'error', error: result.error } : envItem
-            )
-          );
-          
-          LogService.log(`Error checking ${env.name} status: ${result.error}`, true);
+        try {
+          const info: EnvironmentInfo = await GitService.getEnvironmentInfo(env.name);
+          setEnvironments(prevEnvs => prevEnvs.map(e => e.name === env.name ? {
+            name: info.name,
+            branch: info.branch,
+            status: info.status,
+            lastDeployedCommit: info.lastDeployedCommit,
+            currentHeadCommit: info.currentHeadCommit
+          } : e));
+          setCommitsByEnv(prev => ({ ...prev, [env.name]: info.commits }));
+          // Refresh commit list for selected environment after each env update
+          if (selectedEnvironment === env.name) {
+            setCommits(info.commits);
+          }
+          LogService.log(`Loaded info for ${env.name}. Status: ${info.status}, Commits: ${info.commits.length}`);
+        } catch (e) {
+          setEnvironments(prevEnvs => prevEnvs.map(e => e.name === env.name ? env : e));
+          setCommitsByEnv(prev => ({ ...prev, [env.name]: [] }));
         }
       }
-      
-      LogService.log('Completed checking status for all environments.');
+      LogService.log('Completed checking all info for all environments.');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      LogService.log(`Error during bulk status check: ${errorMessage}`, true);
+      LogService.log(`Error during bulk info check: ${errorMessage}`, true);
     } finally {
       setIsOperationRunning(false);
     }
   };
   
-  const handleViewDetails = async (envName: string) => {
-    if (isOperationRunning) return;
-    
-    setIsOperationRunning(true);
-    setSelectedEnvironment(envName);
-    setIsLoadingCommits(true);
-    setCommits([]);
-    
-    LogService.log(`Loading commit details for ${envName}...`);
-    
-    try {
-      // First trigger a status check for this environment
-      LogService.log(`Checking status for ${envName} environment...`);
-      const statusResult = await GitService.getEnvironmentStatus(envName);
-      
-      if (statusResult.success) {
-        const envData = JSON.parse(statusResult.output) as Environment;
-        setEnvironments(prevEnvs => 
-          prevEnvs.map(env => 
-            env.name === envName ? envData : env
-          )
-        );
-        LogService.log(`Status for ${envName}: ${envData.status}`);
-      } else {
-        LogService.log(`Error checking ${envName} status: ${statusResult.error}`, true);
-      }
-      
-      // Then load the commits
-      const commits = await GitService.getCommitsBetweenTagAndHead(envName);
-      setCommits(commits);
-      LogService.log(`Loaded ${commits.length} commits for ${envName}.`);
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      LogService.log(`Error loading commits for ${envName}: ${errorMessage}`, true);
-    } finally {
-      setIsLoadingCommits(false);
-      setIsOperationRunning(false);
-    }
-  };
+  // Remove handleViewDetails (no longer needed)
 
   const handleDeploy = async (envName: string) => {
     if (isOperationRunning) return;
@@ -434,6 +408,7 @@ const Dashboard: React.FC = () => {
               <th>Environment</th>
               <th>Branch</th>
               <th>Status</th>
+              <th>Missing Commits</th>
               <th>Last Deployed</th>
               <th>Current HEAD</th>
               <th>Actions</th>
@@ -444,26 +419,28 @@ const Dashboard: React.FC = () => {
               <EnvironmentRow
                 key={env.name}
                 environment={env}
-                onStatusCheck={handleCheckStatus}
-                onViewDetails={handleViewDetails}
+                isSelected={selectedEnvironment === env.name}
+                onSelect={handleSelectEnvironment}
+                onRefresh={handleRefreshEnvironment}
                 onDeploy={handleDeploy}
                 isOperationRunning={isOperationRunning}
                 isDeployDisabled={disabledEnvironments.includes(env.name)}
+                missingCommitsCount={(commitsByEnv[env.name] || []).length}
               />
             ))}
           </tbody>
         </table>
       </div>
-      
+
       {selectedEnvironment && (
         <div className="commit-details">
           <h2>Commits for {selectedEnvironment}</h2>
           <CommitList 
-            commits={commits} 
-            loading={isLoadingCommits} 
-            repositoryUrl={repositoryUrl} 
-            recentCommitDays={recentCommitDays}
+            commits={commits}
+            loading={isLoadingCommits}
+            repositoryUrl={repositoryUrl}
           />
+          {/* Load more button hidden for now */}
         </div>
       )}
         <div className="log-panel">

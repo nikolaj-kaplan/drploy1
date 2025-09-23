@@ -1,3 +1,11 @@
+export interface EnvironmentInfo {
+  name: string;
+  branch: string;
+  status: 'up-to-date' | 'pending-commits' | 'ahead-of-branch' | 'loading' | 'error';
+  lastDeployedCommit: string | null;
+  currentHeadCommit: string | null;
+  commits: Commit[];
+}
 export interface Environment {
   name: string;
   branch: string;

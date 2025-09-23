@@ -1,3 +1,5 @@
+
+
 import { ipcMain } from "electron";
 import * as fs from "fs";
 import * as path from "path";
@@ -5,6 +7,144 @@ import { executeGitCommand } from "./git";
 import { userSettings, getCurrentRepoPath, saveSettings, updateEnvironmentMapping } from "./settings";
 import { logMessage } from "./logger";
 import { EnvironmentStatus, DeploymentResult, UserSettings } from "./types";
+
+// Handler for fetching older deployed commits only (pagination)
+ipcMain.on("get-older-deployed-commits", async (event, { env, limit = 10, offset = 0 }) => {
+  try {
+    const branch = userSettings.environmentMappings[env];
+    await executeGitCommand("git fetch --all --tags --force");
+    const tagExists = await executeGitCommand(`git tag -l ${env}`);
+    let deployedCommits: any[] = [];
+    if (tagExists.output.trim()) {
+      const deployedLogCmd =
+        `git log ${env}^^{commit} --pretty=format:%H%n%h%n%s%n%an%n%ad%n--COMMIT-- --date=iso --skip=${offset} -n ${limit}`;
+      const deployedCommitsResult = await executeGitCommand(deployedLogCmd);
+      if (deployedCommitsResult.output.trim()) {
+        const commitChunks = deployedCommitsResult.output.split('--COMMIT--').filter(chunk => chunk.trim());
+        deployedCommits = commitChunks.map(chunk => {
+          try {
+            const lines = chunk.trim().split('\n');
+            if (lines.length >= 5) {
+              return {
+                fullHash: lines[0].trim(),
+                hash: lines[1].trim(),
+                message: lines[2].trim(),
+                author: lines[3].trim(),
+                timestamp: lines[4].trim(),
+                deployed: true
+              };
+            } else {
+              throw new Error(`Invalid commit chunk format: ${chunk}`);
+            }
+          } catch (err) {
+            logMessage(`Error parsing commit: ${err}`, true);
+            return {
+              hash: "unknown",
+              message: `Error parsing commit`,
+              author: "unknown",
+              timestamp: new Date().toISOString(),
+              deployed: true
+            };
+          }
+        });
+      }
+    }
+    event.reply(`${env}-older-deployed-commits`, deployedCommits);
+  } catch (error) {
+    logMessage(`Error retrieving older deployed commits for ${env}: ${error}`, true);
+    event.reply(`${env}-older-deployed-commits`, [] as any[]);
+  }
+});
+
+
+
+
+// Unified handler: get all info for an environment (status, SHAs, commits)
+ipcMain.on("get-environment-info", async (event, env) => {
+    try {
+      const branch = userSettings.environmentMappings[env];
+      await executeGitCommand("git fetch --all --tags --force");
+      // Get HEAD commit
+      const headResult = await executeGitCommand(`git rev-parse origin/${branch}`);
+      const headCommit = headResult.output.trim();
+      // Check if tag exists
+      const tagExists = await executeGitCommand(`git tag -l ${env}`);
+      let lastDeployedCommit: string | null = null;
+      let status: string = "up-to-date";
+      if (tagExists.output.trim()) {
+        const tagCommitResult = await executeGitCommand(`git rev-parse ${env}^^{commit}`);
+        lastDeployedCommit = tagCommitResult.output.trim() || null;
+        const diffResult = await executeGitCommand(`git rev-list --count ${env}^^{commit}..origin/${branch}`);
+        const commitCount = parseInt(diffResult.output.trim()) || 0;
+        if (commitCount > 0) {
+          status = "pending-commits";
+        } else {
+          const reverseResult = await executeGitCommand(`git rev-list --count origin/${branch}..${env}^^{commit}`);
+          const reverseCount = parseInt(reverseResult.output.trim()) || 0;
+          if (reverseCount > 0) {
+            status = "ahead-of-branch";
+          }
+        }
+      } else {
+        status = "pending-commits";
+      }
+      // Get commits (reuse logic from get-commits-between-tag-and-head)
+      let commits: any[] = [];
+      const tagExistsAgain = await executeGitCommand(`git tag -l ${env}`);
+      if (tagExistsAgain.output.trim()) {
+        const logResult = await executeGitCommand(
+          `git log ${env}^^{commit}..origin/${branch} --pretty=format:%H%n%h%n%s%n%an%n%ad%n--COMMIT-- --date=iso`
+        );
+        if (logResult.output.trim()) {
+          const commitChunks = logResult.output.split('--COMMIT--').filter(chunk => chunk.trim());
+          commits = commitChunks.map(chunk => {
+            try {
+              const lines = chunk.trim().split('\n');
+              if (lines.length >= 5) {
+                return {
+                  fullHash: lines[0].trim(),
+                  hash: lines[1].trim(),
+                  message: lines[2].trim(),
+                  author: lines[3].trim(),
+                  timestamp: lines[4].trim(),
+                  deployed: false
+                };
+              } else {
+                throw new Error(`Invalid commit chunk format: ${chunk}`);
+              }
+            } catch (err) {
+              return {
+                hash: "unknown",
+                message: `Error parsing commit`,
+                author: "unknown",
+                timestamp: new Date().toISOString(),
+                deployed: false
+              };
+            }
+          });
+        }
+      }
+      event.reply(`${env}-info-retrieved`, {
+        name: env,
+        branch,
+        status,
+        lastDeployedCommit,
+        currentHeadCommit: headCommit,
+        commits
+      });
+    } catch (error) {
+      event.reply(`${env}-info-retrieved`, {
+        name: env,
+        branch: userSettings.environmentMappings[env],
+        status: 'error',
+        lastDeployedCommit: null,
+        currentHeadCommit: null,
+        commits: [],
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  });
+
 
 /**
  * Register all Git-related IPC handlers
@@ -166,30 +306,21 @@ export function registerGitHandlers() {
   });
 
   // Get commits between tag and HEAD
-  ipcMain.on("get-commits-between-tag-and-head", async (event, env) => {
+  ipcMain.on("get-commits-between-tag-and-head", async (event, { env, deployedLimit = 10, deployedOffset = 0 }) => {
     try {
       const branch = userSettings.environmentMappings[env];
-
-      // Fetch latest data
       await executeGitCommand("git fetch --all --tags --force");
-
-      // Check if tag exists
       const tagExists = await executeGitCommand(`git tag -l ${env}`);
-
       let commits: any[] = [];
       let pendingCommits: any[] = [];
       let recentDeployedCommits: any[] = [];
-
       if (tagExists.output.trim()) {
-        // Get pending commits between tag and remote HEAD
+        // Pending commits
         const logResult = await executeGitCommand(
           `git log ${env}^^{commit}..origin/${branch} --pretty=format:%H%n%h%n%s%n%an%n%ad%n--COMMIT-- --date=iso`
         );
-
         if (logResult.output.trim()) {
-          // Parse pending commits
           const commitChunks = logResult.output.split('--COMMIT--').filter(chunk => chunk.trim());
-          
           pendingCommits = commitChunks.map(chunk => {
             try {
               const lines = chunk.trim().split('\n');
@@ -200,14 +331,13 @@ export function registerGitHandlers() {
                   message: lines[2].trim(),
                   author: lines[3].trim(),
                   timestamp: lines[4].trim(),
-                  deployed: false // These are pending commits
+                  deployed: false
                 };
               } else {
                 throw new Error(`Invalid commit chunk format: ${chunk}`);
               }
             } catch (err) {
-              const errorMessage = err instanceof Error ? err.message : String(err);
-              logMessage(`Error parsing commit: ${errorMessage}`, true);
+              logMessage(`Error parsing commit: ${err}`, true);
               return {
                 hash: "unknown",
                 message: `Error parsing commit`,
@@ -218,19 +348,12 @@ export function registerGitHandlers() {
             }
           });
         }
-
-        // Always also get recent deployed commits from the last N days
-        const recentDaysAgo = new Date();
-        recentDaysAgo.setDate(recentDaysAgo.getDate() - userSettings.recentCommitDays);
-        const sinceDate = recentDaysAgo.toISOString().split('T')[0]; // YYYY-MM-DD format
-
-        const recentCommitsResult = await executeGitCommand(
-          `git log ${env}^^{commit} --since="${sinceDate}" --pretty=format:%H%n%h%n%s%n%an%n%ad%n--COMMIT-- --date=iso`
-        );
-
-        if (recentCommitsResult.output.trim()) {
-          const commitChunks = recentCommitsResult.output.split('--COMMIT--').filter(chunk => chunk.trim());
-          
+        // Deployed commits (paginated)
+        const deployedLogCmd =
+          `git log ${env}^^{commit} --pretty=format:%H%n%h%n%s%n%an%n%ad%n--COMMIT-- --date=iso --skip=${deployedOffset} -n ${deployedLimit}`;
+        const deployedCommitsResult = await executeGitCommand(deployedLogCmd);
+        if (deployedCommitsResult.output.trim()) {
+          const commitChunks = deployedCommitsResult.output.split('--COMMIT--').filter(chunk => chunk.trim());
           recentDeployedCommits = commitChunks.map(chunk => {
             try {
               const lines = chunk.trim().split('\n');
@@ -241,14 +364,13 @@ export function registerGitHandlers() {
                   message: lines[2].trim(),
                   author: lines[3].trim(),
                   timestamp: lines[4].trim(),
-                  deployed: true // These are already deployed commits
+                  deployed: true
                 };
               } else {
                 throw new Error(`Invalid commit chunk format: ${chunk}`);
               }
             } catch (err) {
-              const errorMessage = err instanceof Error ? err.message : String(err);
-              logMessage(`Error parsing commit: ${errorMessage}`, true);
+              logMessage(`Error parsing commit: ${err}`, true);
               return {
                 hash: "unknown",
                 message: `Error parsing commit`,
@@ -259,26 +381,17 @@ export function registerGitHandlers() {
             }
           });
         }
-
-        // Combine pending commits (always shown) with recent deployed commits
-        // Remove duplicates by hash (in case a pending commit is also in recent deployed)
+        // Remove duplicates by hash
         const allHashes = new Set(pendingCommits.map(c => c.fullHash || c.hash));
         const uniqueRecentDeployed = recentDeployedCommits.filter(c => !allHashes.has(c.fullHash || c.hash));
-        
         commits = [...pendingCommits, ...uniqueRecentDeployed];
       } else {
         // No tag exists, show recent commits from branch (all considered pending)
-        const recentDaysAgo = new Date();
-        recentDaysAgo.setDate(recentDaysAgo.getDate() - userSettings.recentCommitDays);
-        const sinceDate = recentDaysAgo.toISOString().split('T')[0]; // YYYY-MM-DD format
-
         const recentCommitsResult = await executeGitCommand(
-          `git log origin/${branch} --since="${sinceDate}" --pretty=format:%H%n%h%n%s%n%an%n%ad%n--COMMIT-- --date=iso`
+          `git log origin/${branch} --pretty=format:%H%n%h%n%s%n%an%n%ad%n--COMMIT-- --date=iso -n ${deployedLimit}`
         );
-
         if (recentCommitsResult.output.trim()) {
           const commitChunks = recentCommitsResult.output.split('--COMMIT--').filter(chunk => chunk.trim());
-          
           commits = commitChunks.map(chunk => {
             try {
               const lines = chunk.trim().split('\n');
@@ -289,14 +402,13 @@ export function registerGitHandlers() {
                   message: lines[2].trim(),
                   author: lines[3].trim(),
                   timestamp: lines[4].trim(),
-                  deployed: false // These are pending commits (no tag exists yet)
+                  deployed: false
                 };
               } else {
                 throw new Error(`Invalid commit chunk format: ${chunk}`);
               }
             } catch (err) {
-              const errorMessage = err instanceof Error ? err.message : String(err);
-              logMessage(`Error parsing commit: ${errorMessage}`, true);
+              logMessage(`Error parsing commit: ${err}`, true);
               return {
                 hash: "unknown",
                 message: `Error parsing commit`,
@@ -308,7 +420,6 @@ export function registerGitHandlers() {
           });
         }
       }
-
       event.reply(`${env}-commits-retrieved`, commits);
     } catch (error) {
       logMessage(`Error retrieving commits for ${env}: ${error}`, true);
