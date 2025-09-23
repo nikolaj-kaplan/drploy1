@@ -256,6 +256,8 @@ const Dashboard: React.FC = () => {
     }
   };
   
+  // Remove full reload logic from Dashboard when returning from SettingsPage
+
   // Remove handleViewDetails (no longer needed)
 
   const handleDeploy = async (envName: string) => {
