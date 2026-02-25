@@ -4,14 +4,33 @@ import { ipcMain } from "electron";
 import * as fs from "fs";
 import * as path from "path";
 import { executeGitCommand } from "./git";
-import { userSettings, getCurrentRepoPath, saveSettings, updateEnvironmentMapping } from "./settings";
+import {
+  userSettings,
+  getCurrentRepoPath,
+  saveSettings,
+  updateEnvironmentMapping,
+  loadEnvironmentMappingsFromCentralRepo,
+} from "./settings";
 import { logMessage } from "./logger";
 import { EnvironmentStatus, DeploymentResult, UserSettings } from "./types";
+
+async function getLatestEnvironmentMappings(): Promise<Record<string, string>> {
+  return loadEnvironmentMappingsFromCentralRepo();
+}
+
+function getBranchForEnvironment(mappings: Record<string, string>, env: string): string {
+  const branch = mappings[env];
+  if (!branch) {
+    throw new Error(`No branch mapping found for environment '${env}'`);
+  }
+  return branch;
+}
 
 // Handler for fetching older deployed commits only (pagination)
 ipcMain.on("get-older-deployed-commits", async (event, { env, limit = 10, offset = 0 }) => {
   try {
-    const branch = userSettings.environmentMappings[env];
+    const mappings = await getLatestEnvironmentMappings();
+    const branch = getBranchForEnvironment(mappings, env);
     await executeGitCommand("git fetch --all --tags --force");
     const tagExists = await executeGitCommand(`git tag -l ${env}`);
     let deployedCommits: any[] = [];
@@ -62,7 +81,8 @@ ipcMain.on("get-older-deployed-commits", async (event, { env, limit = 10, offset
 // Unified handler: get all info for an environment (status, SHAs, commits)
 ipcMain.on("get-environment-info", async (event, env) => {
     try {
-      const branch = userSettings.environmentMappings[env];
+  const mappings = await getLatestEnvironmentMappings();
+  const branch = mappings[env];
       await executeGitCommand("git fetch --all --tags --force");
       // Get HEAD commit
       const headResult = await executeGitCommand(`git rev-parse origin/${branch}`);
@@ -209,7 +229,8 @@ export function registerGitHandlers() {
   // Check environment status
   ipcMain.on("check-environment-status", async (event, env) => {
     try {
-      const branch = userSettings.environmentMappings[env];
+      const mappings = await getLatestEnvironmentMappings();
+      const branch = getBranchForEnvironment(mappings, env);
 
       // Single fetch operation for all remotes and tags
       await executeGitCommand("git fetch --all --tags --force");
@@ -270,7 +291,8 @@ export function registerGitHandlers() {
   // Deploy to environment
   ipcMain.on("deploy-to-environment", async (event, env) => {
     try {
-      const branch = userSettings.environmentMappings[env];
+      const mappings = await getLatestEnvironmentMappings();
+      const branch = getBranchForEnvironment(mappings, env);
 
       // Fetch latest data and checkout branch
       await executeGitCommand("git fetch --all --tags --force");
@@ -308,7 +330,8 @@ export function registerGitHandlers() {
   // Get commits between tag and HEAD
   ipcMain.on("get-commits-between-tag-and-head", async (event, { env, deployedLimit = 10, deployedOffset = 0 }) => {
     try {
-      const branch = userSettings.environmentMappings[env];
+      const mappings = await getLatestEnvironmentMappings();
+      const branch = getBranchForEnvironment(mappings, env);
       await executeGitCommand("git fetch --all --tags --force");
       const tagExists = await executeGitCommand(`git tag -l ${env}`);
       let commits: any[] = [];
@@ -430,8 +453,9 @@ export function registerGitHandlers() {
   // Check all environments status
   ipcMain.on("check-all-environments", async (event) => {
     try {
+      const mappings = await getLatestEnvironmentMappings();
       // Get all environment names
-      const environments = Object.keys(userSettings.environmentMappings);
+      const environments = Object.keys(mappings);
 
       // Single fetch operation for all remotes and tags at the beginning
       await executeGitCommand("git fetch --all --tags --force");
@@ -441,7 +465,7 @@ export function registerGitHandlers() {
 
       // Check each environment
       for (const env of environments) {
-        const branch = userSettings.environmentMappings[env];
+        const branch = getBranchForEnvironment(mappings, env);
 
         try {
           // Get current HEAD commit of the remote branch (no checkout needed)
@@ -516,8 +540,9 @@ export function registerGitHandlers() {
   // Deploy all outdated environments
   ipcMain.on("deploy-all-outdated", async (event) => {
     try {
+      const mappings = await getLatestEnvironmentMappings();
       // Get all environment names
-      const environments = Object.keys(userSettings.environmentMappings);
+      const environments = Object.keys(mappings);
 
       // Single fetch operation at the beginning
       await executeGitCommand("git fetch --all --tags --force");
@@ -527,7 +552,7 @@ export function registerGitHandlers() {
 
       // Check and deploy to each outdated environment
       for (const env of environments) {
-        const branch = userSettings.environmentMappings[env];
+        const branch = mappings[env];
 
         try {
           // Check if tag exists (without switching branches first)

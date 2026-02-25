@@ -6,13 +6,6 @@ import * as fs from "fs";
 import * as https from "https";
 import { logMessage } from "./logger";
 
-const DEFAULT_ENVIRONMENT_MAPPINGS: Record<string, string> = {
-  "dev-test": "develop",
-  test: "release/test",
-  preprod: "release/candidate",
-  prod: "master",
-};
-
 const CENTRAL_MAPPING_REPO = "drdk/umbraco-deploy-mapping";
 const CENTRAL_MAPPING_FILE_PATH = "environment-mappings.json";
 
@@ -21,7 +14,7 @@ const store = new Store<UserSettings>({
   defaults: {
     githubToken: "",
     repositoryUrl: "",
-    environmentMappings: DEFAULT_ENVIRONMENT_MAPPINGS,
+    environmentMappings: {},
     recentCommitDays: 7, // Default to 7 days
   },
 });
@@ -30,7 +23,7 @@ const store = new Store<UserSettings>({
 export const userSettings: UserSettings = {
   githubToken: store.get("githubToken") || "",
   repositoryUrl: store.get("repositoryUrl") || "",
-  environmentMappings: store.get("environmentMappings") || DEFAULT_ENVIRONMENT_MAPPINGS,
+  environmentMappings: {},
   recentCommitDays: store.get("recentCommitDays") || 7,
 };
 
@@ -45,19 +38,31 @@ function callGitHubApi(
   body?: string
 ): Promise<{ statusCode: number; body: string }> {
   return new Promise((resolve, reject) => {
+    const headers: Record<string, string | number> = {
+      Accept: "application/vnd.github+json",
+      Authorization: `Bearer ${token}`,
+      "X-GitHub-Api-Version": "2022-11-28",
+      "User-Agent": "dr-ploy",
+      "Cache-Control": "no-cache",
+      Pragma: "no-cache",
+    };
+
+    if (body) {
+      headers["Content-Type"] = "application/json";
+      headers["Content-Length"] = Buffer.byteLength(body);
+    }
+
+    const finalPath =
+      method === "GET"
+        ? `${requestPath}${requestPath.includes("?") ? "&" : "?"}_ts=${Date.now()}`
+        : requestPath;
+
     const req = https.request(
       {
         hostname: "api.github.com",
-        path: requestPath,
+        path: finalPath,
         method,
-        headers: {
-          Accept: "application/vnd.github+json",
-          Authorization: `Bearer ${token}`,
-          "X-GitHub-Api-Version": "2022-11-28",
-          "User-Agent": "dr-ploy",
-          "Content-Type": "application/json",
-          "Content-Length": body ? Buffer.byteLength(body) : 0,
-        },
+        headers,
       },
       (res) => {
         let responseBody = "";
@@ -107,7 +112,7 @@ function sanitizeEnvironmentMappings(value: unknown): Record<string, string> {
 export async function loadEnvironmentMappingsFromCentralRepo(): Promise<Record<string, string>> {
   const token = userSettings.githubToken;
   if (!token) {
-    return userSettings.environmentMappings || DEFAULT_ENVIRONMENT_MAPPINGS;
+    throw new Error("GitHub token is required to load central environment mappings");
   }
 
   try {
@@ -115,12 +120,13 @@ export async function loadEnvironmentMappingsFromCentralRepo(): Promise<Record<s
     const response = await callGitHubApi(token, requestPath, "GET");
 
     if (response.statusCode === 404) {
-      logMessage("Central mapping file not found. Using local environment mappings.");
-      return userSettings.environmentMappings || DEFAULT_ENVIRONMENT_MAPPINGS;
+      throw new Error("Central mapping file not found in mapping repository");
     }
 
     if (response.statusCode !== 200) {
-      throw new Error(`GitHub API responded with status ${response.statusCode}`);
+      throw new Error(
+        `GitHub API responded with status ${response.statusCode}: ${response.body.slice(0, 300)}`
+      );
     }
 
     const payload = JSON.parse(response.body) as { content?: string; encoding?: string };
@@ -131,14 +137,16 @@ export async function loadEnvironmentMappingsFromCentralRepo(): Promise<Record<s
     const decoded = Buffer.from(payload.content, "base64").toString("utf-8");
     const parsed = JSON.parse(decoded);
     const validated = sanitizeEnvironmentMappings(parsed);
-    const mergedMappings =
-      Object.keys(validated).length > 0 ? validated : DEFAULT_ENVIRONMENT_MAPPINGS;
+    if (Object.keys(validated).length === 0) {
+      throw new Error("Central mapping file is empty or invalid");
+    }
 
-    userSettings.environmentMappings = mergedMappings;
-    store.set("environmentMappings", mergedMappings);
+    userSettings.environmentMappings = validated;
 
-    logMessage("Loaded environment mappings from central repository");
-    return mergedMappings;
+    logMessage(
+      `Loaded environment mappings from central repository (${Object.keys(validated).join(", ")})`
+    );
+    return validated;
   } catch (error) {
     logMessage(
       `Failed to load central environment mappings: ${
@@ -146,8 +154,7 @@ export async function loadEnvironmentMappingsFromCentralRepo(): Promise<Record<s
       }`,
       true
     );
-
-    return userSettings.environmentMappings || DEFAULT_ENVIRONMENT_MAPPINGS;
+    throw error;
   }
 }
 
@@ -160,10 +167,9 @@ export async function saveEnvironmentMappingsToCentralRepo(
   }
 
   const sanitizedMappings = sanitizeEnvironmentMappings(mappings);
-  const finalMappings =
-    Object.keys(sanitizedMappings).length > 0
-      ? sanitizedMappings
-      : DEFAULT_ENVIRONMENT_MAPPINGS;
+  if (Object.keys(sanitizedMappings).length === 0) {
+    throw new Error("Cannot save empty environment mappings to central repository");
+  }
 
   const requestPath = toGitHubApiPath(CENTRAL_MAPPING_REPO, CENTRAL_MAPPING_FILE_PATH);
 
@@ -176,7 +182,7 @@ export async function saveEnvironmentMappingsToCentralRepo(
     throw new Error(`Unable to read central mapping file: ${existing.statusCode}`);
   }
 
-  const content = `${JSON.stringify(finalMappings, null, 2)}\n`;
+  const content = `${JSON.stringify(sanitizedMappings, null, 2)}\n`;
   const payload = {
     message: `Update environment mappings from DR Deploy (${new Date().toISOString()})`,
     content: Buffer.from(content, "utf-8").toString("base64"),
@@ -194,8 +200,7 @@ export async function saveEnvironmentMappingsToCentralRepo(
     throw new Error(`Unable to save central mapping file: ${saveResponse.statusCode}`);
   }
 
-  userSettings.environmentMappings = finalMappings;
-  store.set("environmentMappings", finalMappings);
+  userSettings.environmentMappings = sanitizedMappings;
   logMessage("Saved environment mappings to central repository");
 }
 
@@ -274,18 +279,13 @@ export function saveSettings(settings: UserSettings): void {
   // Save settings to store for persistence
   store.set("githubToken", settings.githubToken);
   store.set("repositoryUrl", settings.repositoryUrl);
-  store.set("environmentMappings", settings.environmentMappings);
 }
 
 /**
  * Update a specific environment mapping
  */
 export function updateEnvironmentMapping(env: string, branch: string): boolean {
-  if (userSettings.environmentMappings) {
-    userSettings.environmentMappings[env] = branch;
-    // Save updated settings to store
-    store.set("environmentMappings", userSettings.environmentMappings);
-    return true;
-  }
-  return false;
+  userSettings.environmentMappings = userSettings.environmentMappings || {};
+  userSettings.environmentMappings[env] = branch;
+  return true;
 }

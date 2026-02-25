@@ -76,7 +76,10 @@ export function registerSettingsHandlers() {
         }`,
         true
       );
-      event.reply("settings-loaded", userSettings);
+      event.reply("settings-loaded", {
+        ...userSettings,
+        environmentMappings: {},
+      });
     }
   });
 
