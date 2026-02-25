@@ -4,7 +4,14 @@ import * as fs from "fs";
 import * as path from "path";
 import { UserSettings } from "./types";
 import { logMessage } from "./logger";
-import { userSettings, saveSettings, getCurrentRepoPath, updateEnvironmentMapping } from "./settings";
+import {
+  userSettings,
+  saveSettings,
+  getCurrentRepoPath,
+  updateEnvironmentMapping,
+  loadEnvironmentMappingsFromCentralRepo,
+  saveEnvironmentMappingsToCentralRepo,
+} from "./settings";
 import { executeGitCommand } from "./git";
 
 /**
@@ -13,43 +20,85 @@ import { executeGitCommand } from "./git";
 export function registerSettingsHandlers() {
   // Settings IPC handlers
   ipcMain.on("save-settings", async (event, settings: UserSettings) => {
-    saveSettings(settings);
-    const repoPath = getCurrentRepoPath();
+    try {
+      saveSettings(settings);
+      const repoPath = getCurrentRepoPath();
 
-    // Create directory if it doesn't exist
-    if (!fs.existsSync(repoPath)) {
-      try {
-        fs.mkdirSync(repoPath, { recursive: true });
-        logMessage(`Created repository directory: ${repoPath}`);
-      } catch (error) {
-        logMessage(
-          `Failed to create repository directory: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-          true
-        );
+      // Create directory if it doesn't exist
+      if (!fs.existsSync(repoPath)) {
+        try {
+          fs.mkdirSync(repoPath, { recursive: true });
+          logMessage(`Created repository directory: ${repoPath}`);
+        } catch (error) {
+          logMessage(
+            `Failed to create repository directory: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+            true
+          );
+        }
       }
-    }
 
-    // Initialize the repository if it doesn't exist
-    if (!fs.existsSync(path.join(repoPath, ".git"))) {
-      logMessage("Repository does not exist, initializing...");
-      await executeGitCommand(`git clone ${settings.repositoryUrl} ${repoPath}`);
-    } else {
-      logMessage("Repository already exists, fetching latest changes");
-      await executeGitCommand("git fetch --tags --force", repoPath);
-    }
+      // Initialize the repository if it doesn't exist
+      if (!fs.existsSync(path.join(repoPath, ".git"))) {
+        logMessage("Repository does not exist, initializing...");
+        await executeGitCommand(`git clone ${settings.repositoryUrl} ${repoPath}`);
+      } else {
+        logMessage("Repository already exists, fetching latest changes");
+        await executeGitCommand("git fetch --tags --force", repoPath);
+      }
 
-    event.reply("settings-saved", true);
+      await saveEnvironmentMappingsToCentralRepo(settings.environmentMappings);
+
+      event.reply("settings-saved", true);
+    } catch (error) {
+      logMessage(
+        `Failed to save settings: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        true
+      );
+      event.reply("settings-saved", false);
+    }
   });
 
-  ipcMain.on("load-settings", (event) => {
-    event.reply("settings-loaded", userSettings);
+  ipcMain.on("load-settings", async (event) => {
+    try {
+      const centralMappings = await loadEnvironmentMappingsFromCentralRepo();
+      event.reply("settings-loaded", {
+        ...userSettings,
+        environmentMappings: centralMappings,
+      });
+    } catch (error) {
+      logMessage(
+        `Failed to load settings: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        true
+      );
+      event.reply("settings-loaded", userSettings);
+    }
   });
 
-  ipcMain.on("update-environment-mapping", (event, { env, branch }) => {
-    const success = updateEnvironmentMapping(env, branch);
-    event.reply("mapping-updated", success);
+  ipcMain.on("update-environment-mapping", async (event, { env, branch }) => {
+    try {
+      const success = updateEnvironmentMapping(env, branch);
+      if (!success) {
+        event.reply("mapping-updated", false);
+        return;
+      }
+
+      await saveEnvironmentMappingsToCentralRepo(userSettings.environmentMappings);
+      event.reply("mapping-updated", true);
+    } catch (error) {
+      logMessage(
+        `Failed to update environment mapping: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        true
+      );
+      event.reply("mapping-updated", false);
+    }
   });
 }
 

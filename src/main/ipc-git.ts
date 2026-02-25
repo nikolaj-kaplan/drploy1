@@ -17,7 +17,7 @@ ipcMain.on("get-older-deployed-commits", async (event, { env, limit = 10, offset
     let deployedCommits: any[] = [];
     if (tagExists.output.trim()) {
       const deployedLogCmd =
-        `git log ${env}^^{commit} --pretty=format:%H%n%h%n%s%n%an%n%ad%n--COMMIT-- --date=iso --skip=${offset} -n ${limit}`;
+        `git log ${env}^{commit} --pretty=format:%H%n%h%n%s%n%an%n%ad%n--COMMIT-- --date=iso --skip=${offset} -n ${limit}`;
       const deployedCommitsResult = await executeGitCommand(deployedLogCmd);
       if (deployedCommitsResult.output.trim()) {
         const commitChunks = deployedCommitsResult.output.split('--COMMIT--').filter(chunk => chunk.trim());
@@ -72,14 +72,14 @@ ipcMain.on("get-environment-info", async (event, env) => {
       let lastDeployedCommit: string | null = null;
       let status: string = "up-to-date";
       if (tagExists.output.trim()) {
-        const tagCommitResult = await executeGitCommand(`git rev-parse ${env}^^{commit}`);
+        const tagCommitResult = await executeGitCommand(`git rev-parse ${env}^{commit}`);
         lastDeployedCommit = tagCommitResult.output.trim() || null;
-        const diffResult = await executeGitCommand(`git rev-list --count ${env}^^{commit}..origin/${branch}`);
+        const diffResult = await executeGitCommand(`git rev-list --count ${env}^{commit}..origin/${branch}`);
         const commitCount = parseInt(diffResult.output.trim()) || 0;
         if (commitCount > 0) {
           status = "pending-commits";
         } else {
-          const reverseResult = await executeGitCommand(`git rev-list --count origin/${branch}..${env}^^{commit}`);
+          const reverseResult = await executeGitCommand(`git rev-list --count origin/${branch}..${env}^{commit}`);
           const reverseCount = parseInt(reverseResult.output.trim()) || 0;
           if (reverseCount > 0) {
             status = "ahead-of-branch";
@@ -93,7 +93,7 @@ ipcMain.on("get-environment-info", async (event, env) => {
       const tagExistsAgain = await executeGitCommand(`git tag -l ${env}`);
       if (tagExistsAgain.output.trim()) {
         const logResult = await executeGitCommand(
-          `git log ${env}^^{commit}..origin/${branch} --pretty=format:%H%n%h%n%s%n%an%n%ad%n--COMMIT-- --date=iso`
+          `git log ${env}^{commit}..origin/${branch} --pretty=format:%H%n%h%n%s%n%an%n%ad%n--COMMIT-- --date=iso`
         );
         if (logResult.output.trim()) {
           const commitChunks = logResult.output.split('--COMMIT--').filter(chunk => chunk.trim());
@@ -222,12 +222,12 @@ export function registerGitHandlers() {
       const tagExists = await executeGitCommand(`git tag -l ${env}`);
       let lastDeployedCommit: string | null = null;
       let status: string = "up-to-date";      if (tagExists.output.trim()) {        // Get commit for tag
-        const tagCommitResult = await executeGitCommand(`git rev-parse ${env}^^{commit}`);
+        const tagCommitResult = await executeGitCommand(`git rev-parse ${env}^{commit}`);
         lastDeployedCommit = tagCommitResult.output.trim() || null;
 
         // Check if there are commits between tag and remote HEAD (use count for efficiency)
         const diffResult = await executeGitCommand(
-          `git rev-list --count ${env}^^{commit}..origin/${branch}`
+          `git rev-list --count ${env}^{commit}..origin/${branch}`
         );
 
         const commitCount = parseInt(diffResult.output.trim()) || 0;
@@ -236,7 +236,7 @@ export function registerGitHandlers() {
         } else {
           // Check if tag is ahead of remote HEAD (environment deployed from newer commit)
           const reverseResult = await executeGitCommand(
-            `git rev-list --count origin/${branch}..${env}^^{commit}`
+            `git rev-list --count origin/${branch}..${env}^{commit}`
           );
           
           const reverseCount = parseInt(reverseResult.output.trim()) || 0;
@@ -317,7 +317,7 @@ export function registerGitHandlers() {
       if (tagExists.output.trim()) {
         // Pending commits
         const logResult = await executeGitCommand(
-          `git log ${env}^^{commit}..origin/${branch} --pretty=format:%H%n%h%n%s%n%an%n%ad%n--COMMIT-- --date=iso`
+          `git log ${env}^{commit}..origin/${branch} --pretty=format:%H%n%h%n%s%n%an%n%ad%n--COMMIT-- --date=iso`
         );
         if (logResult.output.trim()) {
           const commitChunks = logResult.output.split('--COMMIT--').filter(chunk => chunk.trim());
@@ -350,7 +350,7 @@ export function registerGitHandlers() {
         }
         // Deployed commits (paginated)
         const deployedLogCmd =
-          `git log ${env}^^{commit} --pretty=format:%H%n%h%n%s%n%an%n%ad%n--COMMIT-- --date=iso --skip=${deployedOffset} -n ${deployedLimit}`;
+          `git log ${env}^{commit} --pretty=format:%H%n%h%n%s%n%an%n%ad%n--COMMIT-- --date=iso --skip=${deployedOffset} -n ${deployedLimit}`;
         const deployedCommitsResult = await executeGitCommand(deployedLogCmd);
         if (deployedCommitsResult.output.trim()) {
           const commitChunks = deployedCommitsResult.output.split('--COMMIT--').filter(chunk => chunk.trim());
@@ -454,13 +454,13 @@ export function registerGitHandlers() {
           let lastDeployedCommit: string | null = null;
           let status = "up-to-date";          if (tagExists.output.trim()) {            // Get commit for tag
             const tagCommitResult = await executeGitCommand(
-              `git rev-parse ${env}^^{commit}`
+              `git rev-parse ${env}^{commit}`
             );
             lastDeployedCommit = tagCommitResult.output.trim() || null;
 
             // Check if there are commits between tag and remote HEAD (use count for efficiency)
             const diffResult = await executeGitCommand(
-              `git rev-list --count ${env}^^{commit}..origin/${branch}`
+              `git rev-list --count ${env}^{commit}..origin/${branch}`
             );
 
             const commitCount = parseInt(diffResult.output.trim()) || 0;
@@ -469,7 +469,7 @@ export function registerGitHandlers() {
             } else {
               // Check if tag is ahead of remote HEAD (environment deployed from newer commit)
               const reverseResult = await executeGitCommand(
-                `git rev-list --count origin/${branch}..${env}^^{commit}`
+                `git rev-list --count origin/${branch}..${env}^{commit}`
               );
               
               const reverseCount = parseInt(reverseResult.output.trim()) || 0;
@@ -535,7 +535,7 @@ export function registerGitHandlers() {
           let needsDeployment = false;          if (tagExists.output.trim()) {
             // Check if there are commits between tag and remote HEAD (use count for efficiency)
             const diffResult = await executeGitCommand(
-              `git rev-list --count ${env}^^{commit}..origin/${branch}`
+              `git rev-list --count ${env}^{commit}..origin/${branch}`
             );
             const commitCount = parseInt(diffResult.output.trim()) || 0;
             needsDeployment = commitCount > 0;

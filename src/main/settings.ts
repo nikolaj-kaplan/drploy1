@@ -3,19 +3,25 @@ import { UserSettings } from "./types";
 import * as path from "path";
 import * as os from "os";
 import * as fs from "fs";
+import * as https from "https";
 import { logMessage } from "./logger";
+
+const DEFAULT_ENVIRONMENT_MAPPINGS: Record<string, string> = {
+  "dev-test": "develop",
+  test: "release/test",
+  preprod: "release/candidate",
+  prod: "master",
+};
+
+const CENTRAL_MAPPING_REPO = "drdk/umbraco-deploy-mapping";
+const CENTRAL_MAPPING_FILE_PATH = "environment-mappings.json";
 
 // Initialize electron-store for persistent storage
 const store = new Store<UserSettings>({
   defaults: {
     githubToken: "",
     repositoryUrl: "",
-    environmentMappings: {
-      "dev-test": "develop",
-      test: "release/test",
-      preprod: "release/candidate",
-      prod: "master",
-    },
+    environmentMappings: DEFAULT_ENVIRONMENT_MAPPINGS,
     recentCommitDays: 7, // Default to 7 days
   },
 });
@@ -24,14 +30,174 @@ const store = new Store<UserSettings>({
 export const userSettings: UserSettings = {
   githubToken: store.get("githubToken") || "",
   repositoryUrl: store.get("repositoryUrl") || "",
-  environmentMappings: store.get("environmentMappings") || {
-    "dev-test": "develop",
-    test: "release/test",
-    preprod: "release/candidate",
-    prod: "master",
-  },
+  environmentMappings: store.get("environmentMappings") || DEFAULT_ENVIRONMENT_MAPPINGS,
   recentCommitDays: store.get("recentCommitDays") || 7,
 };
+
+function toGitHubApiPath(repoWithOwner: string, filePath: string): string {
+  return `/repos/${repoWithOwner}/contents/${filePath}`;
+}
+
+function callGitHubApi(
+  token: string,
+  requestPath: string,
+  method: "GET" | "PUT",
+  body?: string
+): Promise<{ statusCode: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const req = https.request(
+      {
+        hostname: "api.github.com",
+        path: requestPath,
+        method,
+        headers: {
+          Accept: "application/vnd.github+json",
+          Authorization: `Bearer ${token}`,
+          "X-GitHub-Api-Version": "2022-11-28",
+          "User-Agent": "dr-ploy",
+          "Content-Type": "application/json",
+          "Content-Length": body ? Buffer.byteLength(body) : 0,
+        },
+      },
+      (res) => {
+        let responseBody = "";
+        res.on("data", (chunk) => {
+          responseBody += chunk;
+        });
+        res.on("end", () => {
+          resolve({
+            statusCode: res.statusCode || 0,
+            body: responseBody,
+          });
+        });
+      }
+    );
+
+    req.on("error", (error) => reject(error));
+
+    if (body) {
+      req.write(body);
+    }
+
+    req.end();
+  });
+}
+
+function sanitizeEnvironmentMappings(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+
+  const input = value as Record<string, unknown>;
+  const result: Record<string, string> = {};
+
+  for (const [env, branch] of Object.entries(input)) {
+    if (typeof env === "string" && typeof branch === "string") {
+      const normalizedEnv = env.trim();
+      const normalizedBranch = branch.trim();
+      if (normalizedEnv && normalizedBranch) {
+        result[normalizedEnv] = normalizedBranch;
+      }
+    }
+  }
+
+  return result;
+}
+
+export async function loadEnvironmentMappingsFromCentralRepo(): Promise<Record<string, string>> {
+  const token = userSettings.githubToken;
+  if (!token) {
+    return userSettings.environmentMappings || DEFAULT_ENVIRONMENT_MAPPINGS;
+  }
+
+  try {
+    const requestPath = toGitHubApiPath(CENTRAL_MAPPING_REPO, CENTRAL_MAPPING_FILE_PATH);
+    const response = await callGitHubApi(token, requestPath, "GET");
+
+    if (response.statusCode === 404) {
+      logMessage("Central mapping file not found. Using local environment mappings.");
+      return userSettings.environmentMappings || DEFAULT_ENVIRONMENT_MAPPINGS;
+    }
+
+    if (response.statusCode !== 200) {
+      throw new Error(`GitHub API responded with status ${response.statusCode}`);
+    }
+
+    const payload = JSON.parse(response.body) as { content?: string; encoding?: string };
+    if (!payload.content || payload.encoding !== "base64") {
+      throw new Error("Unexpected mapping file payload from GitHub API");
+    }
+
+    const decoded = Buffer.from(payload.content, "base64").toString("utf-8");
+    const parsed = JSON.parse(decoded);
+    const validated = sanitizeEnvironmentMappings(parsed);
+    const mergedMappings =
+      Object.keys(validated).length > 0 ? validated : DEFAULT_ENVIRONMENT_MAPPINGS;
+
+    userSettings.environmentMappings = mergedMappings;
+    store.set("environmentMappings", mergedMappings);
+
+    logMessage("Loaded environment mappings from central repository");
+    return mergedMappings;
+  } catch (error) {
+    logMessage(
+      `Failed to load central environment mappings: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      true
+    );
+
+    return userSettings.environmentMappings || DEFAULT_ENVIRONMENT_MAPPINGS;
+  }
+}
+
+export async function saveEnvironmentMappingsToCentralRepo(
+  mappings: Record<string, string>
+): Promise<void> {
+  const token = userSettings.githubToken;
+  if (!token) {
+    throw new Error("GitHub token is required to save central environment mappings");
+  }
+
+  const sanitizedMappings = sanitizeEnvironmentMappings(mappings);
+  const finalMappings =
+    Object.keys(sanitizedMappings).length > 0
+      ? sanitizedMappings
+      : DEFAULT_ENVIRONMENT_MAPPINGS;
+
+  const requestPath = toGitHubApiPath(CENTRAL_MAPPING_REPO, CENTRAL_MAPPING_FILE_PATH);
+
+  let sha: string | undefined;
+  const existing = await callGitHubApi(token, requestPath, "GET");
+  if (existing.statusCode === 200) {
+    const existingPayload = JSON.parse(existing.body) as { sha?: string };
+    sha = existingPayload.sha;
+  } else if (existing.statusCode !== 404) {
+    throw new Error(`Unable to read central mapping file: ${existing.statusCode}`);
+  }
+
+  const content = `${JSON.stringify(finalMappings, null, 2)}\n`;
+  const payload = {
+    message: `Update environment mappings from DR Deploy (${new Date().toISOString()})`,
+    content: Buffer.from(content, "utf-8").toString("base64"),
+    ...(sha ? { sha } : {}),
+  };
+
+  const saveResponse = await callGitHubApi(
+    token,
+    requestPath,
+    "PUT",
+    JSON.stringify(payload)
+  );
+
+  if (saveResponse.statusCode !== 200 && saveResponse.statusCode !== 201) {
+    throw new Error(`Unable to save central mapping file: ${saveResponse.statusCode}`);
+  }
+
+  userSettings.environmentMappings = finalMappings;
+  store.set("environmentMappings", finalMappings);
+  logMessage("Saved environment mappings to central repository");
+}
 
 /**
  * Function to get the repository path for a specific repository URL
