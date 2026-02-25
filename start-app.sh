@@ -22,6 +22,12 @@ else
     skip_npm=false
 fi
 
+# Always install on first run if dependencies are missing
+if [ ! -d "node_modules" ]; then
+    echo "Dependencies not found (node_modules missing). Running npm install..."
+    skip_npm=false
+fi
+
 # Clean up temporary file
 rm -f git_pull_output.tmp
 

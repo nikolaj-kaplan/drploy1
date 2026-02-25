@@ -22,6 +22,12 @@ if %errorlevel% equ 0 (
     set skip_npm=false
 )
 
+REM Always install on first run if dependencies are missing
+if not exist node_modules (
+    echo Dependencies not found (node_modules missing). Running npm install...
+    set skip_npm=false
+)
+
 REM Clean up temporary file
 del git_pull_output.tmp
 
