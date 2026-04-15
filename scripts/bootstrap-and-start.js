@@ -69,9 +69,14 @@ function main() {
   console.log("");
   if (!skipNpm) {
     console.log("Installing/updating dependencies...");
-    const installResult = run("npm", ["install"]);
+    const hasPnpm = run("pnpm", ["--version"], { capture: true }).status === 0;
+    const pkgManager = hasPnpm ? "pnpm" : "npm";
+    const installArgs = hasPnpm ? ["install"] : ["install", "--no-package-lock"];
+    const installResult = run(pkgManager, installArgs, { capture: true });
+    if (installResult.stdout) process.stdout.write(installResult.stdout);
+    if (installResult.stderr) process.stderr.write(installResult.stderr);
     if (installResult.error || installResult.status !== 0) {
-      fail("ERROR: Failed to install dependencies.");
+      fail("ERROR: Failed to install dependencies.", installResult.error ? String(installResult.error) : "");
     }
   } else {
     console.log("Skipping npm install - no updates were pulled.");
