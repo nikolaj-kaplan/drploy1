@@ -15,7 +15,7 @@ function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
     stdio: options.capture ? "pipe" : "inherit",
     encoding: "utf8",
-    shell: false,
+    shell: true,
   });
 
   return {
