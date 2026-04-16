@@ -8,6 +8,7 @@ const App: React.FC = () => {
   const [isInitialized, setIsInitialized] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [showSettings, setShowSettings] = useState<boolean>(false);
+  const [dashboardRefreshTrigger, setDashboardRefreshTrigger] = useState<number>(0);
 
   // Check if app is initialized by looking for saved settings
   useEffect(() => {
@@ -30,6 +31,10 @@ const App: React.FC = () => {
   };
 
   const toggleSettings = () => {
+    if (showSettings) {
+      // Returning to dashboard — trigger a mapping re-fetch to stay in sync
+      setDashboardRefreshTrigger(prev => prev + 1);
+    }
     setShowSettings(!showSettings);
   };
 
@@ -57,7 +62,7 @@ const App: React.FC = () => {
       {showSettings ? (
         <SettingsPage onClose={toggleSettings} />
       ) : (
-        <Dashboard />
+        <Dashboard refreshTrigger={dashboardRefreshTrigger} />
       )}
     </div>
   );

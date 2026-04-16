@@ -7,7 +7,11 @@ import EnvironmentRow from '../components/EnvironmentRow';
 import CommitList from '../components/CommitList';
 import ProductionConfirmModal from '../components/ProductionConfirmModal';
 
-const Dashboard: React.FC = () => {
+interface DashboardProps {
+  refreshTrigger?: number;
+}
+
+const Dashboard: React.FC<DashboardProps> = ({ refreshTrigger = 0 }) => {
   const [environments, setEnvironments] = useState<Environment[]>([]);
   const [disabledEnvironments, setDisabledEnvironments] = useState<string[]>([]);
   const [selectedEnvironment, setSelectedEnvironment] = useState<string | null>(null);
@@ -215,10 +219,43 @@ const Dashboard: React.FC = () => {
     }
   };
 
+  // Re-fetch mappings and refresh all environments when refreshTrigger changes (e.g. returning from Settings)
+  useEffect(() => {
+    if (refreshTrigger > 0) {
+      handleCheckAllStatus();
+    }
+  }, [refreshTrigger]);
+
   const handleCheckAllStatus = async (initialEnvironments?: Environment[]) => {
     if (isOperationRunning) return;
     setIsOperationRunning(true);
-    const envsToCheck = initialEnvironments || environments;
+
+    // When triggered by the user (not initial load), re-fetch the mapping from the
+    // central repo first so we pick up changes made by other users.
+    let envsToCheck = initialEnvironments || environments;
+    if (!initialEnvironments) {
+      try {
+        LogService.log('Fetching latest environment mappings from central repo...');
+        const freshSettings = await SettingsService.loadSettings();
+        if (freshSettings?.environmentMappings) {
+          const freshEnvs: Environment[] = Object.keys(freshSettings.environmentMappings).map(envName => ({
+            name: envName,
+            branch: freshSettings.environmentMappings[envName],
+            status: 'loading' as 'loading',
+            lastDeployedCommit: null,
+            currentHeadCommit: null
+          }));
+          setEnvironments(freshEnvs);
+          setDisabledEnvironments(freshSettings.disabledEnvironments || []);
+          if (freshSettings.repositoryUrl) setRepositoryUrl(freshSettings.repositoryUrl);
+          envsToCheck = freshEnvs;
+        }
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        LogService.log(`Failed to fetch latest mappings, using cached list: ${errMsg}`, true);
+      }
+    }
+
     setEnvironments(prevEnvs => prevEnvs.map(env => ({ ...env, status: 'loading' as 'loading' })));
     LogService.log('Checking all info for all environments...');
     try {
