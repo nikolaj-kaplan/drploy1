@@ -6,10 +6,10 @@ export const SettingsService = {
   /**
    * Save settings to electron-store
    */
-  saveSettings: (settings: AppSettings): Promise<boolean> => {
+  saveSettings: (settings: AppSettings): Promise<{ success: boolean; error?: string }> => {
     return new Promise((resolve) => {
-      ipcRenderer.once('settings-saved', (_, success: boolean) => {
-        resolve(success);
+      ipcRenderer.once('settings-saved', (_, result: { success: boolean; error?: string }) => {
+        resolve(result);
       });
       
       ipcRenderer.send('save-settings', settings);

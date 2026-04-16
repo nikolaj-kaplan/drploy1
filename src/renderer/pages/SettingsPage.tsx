@@ -9,6 +9,7 @@ interface SettingsPageProps {
 const SettingsPage: React.FC<SettingsPageProps> = ({ onClose }) => {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   
@@ -35,20 +36,25 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onClose }) => {
   const handleSaveSettings = async () => {
     if (!settings) return;
     
+    setIsSaving(true);
+    setError(null);
+    setMessage(null);
     try {
       const result = await SettingsService.saveSettings(settings);
       
-      if (result) {
+      if (result.success) {
         setMessage('Settings saved successfully');
-        setTimeout(() => setMessage(null), 3000); // Clear message after 3 seconds
+        setTimeout(() => setMessage(null), 3000);
       } else {
-        setError('Failed to save settings');
-        setTimeout(() => setError(null), 3000);
+        setError(result.error || 'Failed to save settings');
+        setTimeout(() => setError(null), 5000);
       }
-    } catch (error) {
-      console.error('Error saving settings:', error);
+    } catch (err) {
+      console.error('Error saving settings:', err);
       setError('An unexpected error occurred');
-      setTimeout(() => setError(null), 3000);
+      setTimeout(() => setError(null), 5000);
+    } finally {
+      setIsSaving(false);
     }
   };
   
@@ -222,8 +228,10 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onClose }) => {
       {message && <div className="success-message">{message}</div>}
       
       <div className="settings-actions">
-        <button onClick={handleSaveSettings} className="primary-button">Save Settings</button>
-        <button onClick={onClose}>Back to Dashboard</button>
+        <button onClick={handleSaveSettings} className="primary-button" disabled={isSaving}>
+          {isSaving ? <><span className="btn-spinner" /> Saving...</> : 'Save Settings'}
+        </button>
+        <button onClick={onClose} disabled={isSaving}>Back to Dashboard</button>
       </div>
     </div>
   );

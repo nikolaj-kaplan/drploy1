@@ -81,6 +81,22 @@ button.primary-button:hover {
   background-color: #45a049;
 }
 
+@keyframes btn-spin {
+  to { transform: rotate(360deg); }
+}
+
+.btn-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(255,255,255,0.4);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: btn-spin 0.7s linear infinite;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
 .error-message {
   color: #d32f2f;
   background-color: #ffebee;

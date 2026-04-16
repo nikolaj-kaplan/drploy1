@@ -48,9 +48,24 @@ export function registerSettingsHandlers() {
         await executeGitCommand("git fetch --tags --force", repoPath);
       }
 
+      // Validate that all configured branches exist on the remote
+      const uniqueBranches = [...new Set(Object.values(settings.environmentMappings))];
+      const missingBranches: string[] = [];
+      for (const branch of uniqueBranches) {
+        const checkResult = await executeGitCommand(`git rev-parse --verify origin/${branch}`, getCurrentRepoPath());
+        if (!checkResult.success || !checkResult.output.trim()) {
+          missingBranches.push(branch);
+        }
+      }
+      if (missingBranches.length > 0) {
+        const branchList = missingBranches.join(', ');
+        event.reply("settings-saved", { success: false, error: `Branch not found on remote: ${branchList}` });
+        return;
+      }
+
       await saveEnvironmentMappingsToCentralRepo(settings.environmentMappings);
 
-      event.reply("settings-saved", true);
+      event.reply("settings-saved", { success: true });
     } catch (error) {
       logMessage(
         `Failed to save settings: ${
@@ -58,7 +73,7 @@ export function registerSettingsHandlers() {
         }`,
         true
       );
-      event.reply("settings-saved", false);
+      event.reply("settings-saved", { success: false, error: error instanceof Error ? error.message : String(error) });
     }
   });
 
