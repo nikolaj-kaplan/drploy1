@@ -1,5 +1,5 @@
 import Store from "electron-store";
-import { UserSettings } from "./types";
+import { ActionRunSummary, EnvironmentDeploySummary, UserSettings } from "./types";
 import * as path from "path";
 import * as os from "os";
 import * as fs from "fs";
@@ -29,6 +29,125 @@ export const userSettings: UserSettings = {
 
 function toGitHubApiPath(repoWithOwner: string, filePath: string): string {
   return `/repos/${repoWithOwner}/contents/${filePath}`;
+}
+
+interface GitHubWorkflowRun {
+  id: number;
+  run_number: number;
+  name: string;
+  display_title: string;
+  path?: string;
+  event: string;
+  status: string;
+  conclusion: string | null;
+  html_url: string;
+  head_branch: string | null;
+  head_sha: string | null;
+  created_at: string;
+  run_started_at: string | null;
+  updated_at: string;
+}
+
+interface GitHubWorkflowRunsResponse {
+  workflow_runs?: GitHubWorkflowRun[];
+}
+
+const DEFAULT_DEPLOY_SUMMARY_LIMIT = 40;
+const DEPLOY_RUNTIME_SAMPLE_SIZE = 5;
+
+function normalizeWorkflowPath(workflowPath: string | undefined): string | null {
+  if (!workflowPath) {
+    return null;
+  }
+
+  return workflowPath.split("@")[0]?.trim() || null;
+}
+
+function globPatternToRegex(pattern: string): RegExp {
+  const escaped = pattern
+    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*/g, ".*");
+
+  return new RegExp(`^${escaped}$`, "i");
+}
+
+function extractTagPatternsFromWorkflow(workflowContent: string): string[] {
+  const lines = workflowContent.split(/\r?\n/);
+  const patterns: string[] = [];
+  let insidePushBlock = false;
+  let pushIndent = -1;
+  let insideTagsBlock = false;
+  let tagsIndent = -1;
+
+  for (const line of lines) {
+    const trimmedLine = line.trim();
+    const indent = line.length - line.trimStart().length;
+
+    if (!trimmedLine || trimmedLine.startsWith("#")) {
+      continue;
+    }
+
+    if (insideTagsBlock) {
+      if (indent <= tagsIndent && !trimmedLine.startsWith("- ")) {
+        insideTagsBlock = false;
+      } else if (trimmedLine.startsWith("- ")) {
+        patterns.push(trimmedLine.slice(2).trim().replace(/^['"]|['"]$/g, ""));
+        continue;
+      }
+    }
+
+    if (insidePushBlock && indent <= pushIndent && !trimmedLine.startsWith("push:")) {
+      insidePushBlock = false;
+      insideTagsBlock = false;
+    }
+
+    if (trimmedLine.startsWith("push:")) {
+      insidePushBlock = true;
+      pushIndent = indent;
+      insideTagsBlock = false;
+      continue;
+    }
+
+    if (insidePushBlock && trimmedLine.startsWith("tags:")) {
+      insideTagsBlock = true;
+      tagsIndent = indent;
+    }
+  }
+
+  return patterns;
+}
+
+function getTagTriggeredWorkflowPaths(mappings: Record<string, string>): Set<string> {
+  const workflowsDir = path.join(getCurrentRepoPath(), ".github", "workflows");
+  if (!fs.existsSync(workflowsDir)) {
+    return new Set<string>();
+  }
+
+  const environmentNames = Object.keys(mappings);
+  if (environmentNames.length === 0) {
+    return new Set<string>();
+  }
+
+  const workflowPaths = new Set<string>();
+  const workflowFiles = fs
+    .readdirSync(workflowsDir)
+    .filter((fileName) => fileName.endsWith(".yml") || fileName.endsWith(".yaml"));
+
+  for (const workflowFile of workflowFiles) {
+    const absolutePath = path.join(workflowsDir, workflowFile);
+    const workflowContent = fs.readFileSync(absolutePath, "utf-8");
+    const tagPatterns = extractTagPatternsFromWorkflow(workflowContent);
+
+    const matchesDeploymentTag = environmentNames.some((environmentName) =>
+      tagPatterns.some((pattern) => globPatternToRegex(pattern).test(environmentName))
+    );
+
+    if (matchesDeploymentTag) {
+      workflowPaths.add(`.github/workflows/${workflowFile}`);
+    }
+  }
+
+  return workflowPaths;
 }
 
 function callGitHubApi(
@@ -85,6 +204,219 @@ function callGitHubApi(
     }
 
     req.end();
+  });
+}
+
+export function getRepositorySlugFromUrl(repoUrl: string): string {
+  const trimmedUrl = repoUrl.trim();
+  if (!trimmedUrl) {
+    throw new Error("Repository URL is required");
+  }
+
+  if (trimmedUrl.startsWith("git@github.com:")) {
+    return trimmedUrl
+      .replace("git@github.com:", "")
+      .replace(/\.git$/, "")
+      .trim();
+  }
+
+  const parsedUrl = new URL(trimmedUrl);
+  if (parsedUrl.hostname !== "github.com") {
+    throw new Error("Only github.com repositories are supported for Actions tracking");
+  }
+
+  const parts = parsedUrl.pathname.split("/").filter(Boolean);
+  if (parts.length < 2) {
+    throw new Error("Repository URL must include owner and repository name");
+  }
+
+  return `${parts[0]}/${parts[1].replace(/\.git$/, "")}`;
+}
+
+function inferEnvironmentFromRun(
+  run: GitHubWorkflowRun,
+  mappings: Record<string, string>
+): string | null {
+  const normalizedEnvironments = Object.keys(mappings).map((env) => ({
+    raw: env,
+    normalized: env.toLowerCase(),
+  }));
+  const normalizedBranches = Object.entries(mappings).map(([env, branch]) => ({
+    env,
+    normalizedBranch: branch.toLowerCase(),
+  }));
+
+  const normalizedHeadBranch = run.head_branch?.toLowerCase();
+  if (normalizedHeadBranch) {
+    const environmentMatch = normalizedEnvironments.find(
+      ({ normalized }) => normalized === normalizedHeadBranch
+    );
+    if (environmentMatch) {
+      return environmentMatch.raw;
+    }
+
+    const branchMatch = normalizedBranches.find(
+      ({ normalizedBranch }) => normalizedBranch === normalizedHeadBranch
+    );
+    if (branchMatch) {
+      return branchMatch.env;
+    }
+  }
+
+  const searchableText = `${run.name} ${run.display_title}`.toLowerCase();
+  const textMatch = normalizedEnvironments.find(({ normalized }) =>
+    searchableText.includes(normalized)
+  );
+
+  return textMatch?.raw ?? null;
+}
+
+function toActionRunSummary(
+  run: GitHubWorkflowRun,
+  mappings: Record<string, string>
+): ActionRunSummary {
+  const startedAt = run.run_started_at || run.created_at;
+  const completedAt = run.status === "completed" ? run.updated_at : null;
+  const startedTimestamp = Date.parse(startedAt);
+  const endedTimestamp = Date.parse(completedAt || run.updated_at);
+  const hasValidDuration = !Number.isNaN(startedTimestamp) && !Number.isNaN(endedTimestamp);
+
+  return {
+    id: run.id,
+    runNumber: run.run_number,
+    workflowName: run.name,
+    displayTitle: run.display_title,
+    event: run.event,
+    status: run.status,
+    conclusion: run.conclusion,
+    htmlUrl: run.html_url,
+    headBranch: run.head_branch,
+    headSha: run.head_sha,
+    environment: inferEnvironmentFromRun(run, mappings),
+    createdAt: run.created_at,
+    startedAt,
+    updatedAt: run.updated_at,
+    completedAt,
+    durationSeconds: hasValidDuration
+      ? Math.max(0, Math.round((endedTimestamp - startedTimestamp) / 1000))
+      : null,
+    isActive: run.status !== "completed",
+  };
+}
+
+function isTagTriggeredDeploymentRun(
+  run: GitHubWorkflowRun,
+  mappings: Record<string, string>,
+  tagTriggeredWorkflowPaths: Set<string>
+): boolean {
+  if (run.event !== "push") {
+    return false;
+  }
+
+  const inferredEnvironment = inferEnvironmentFromRun(run, mappings);
+  if (!inferredEnvironment) {
+    return false;
+  }
+
+  if (tagTriggeredWorkflowPaths.size === 0) {
+    return true;
+  }
+
+  const normalizedWorkflowPath = normalizeWorkflowPath(run.path);
+  if (!normalizedWorkflowPath) {
+    return true;
+  }
+
+  return tagTriggeredWorkflowPaths.has(normalizedWorkflowPath);
+}
+
+export async function getRecentActionRuns(limit = 20): Promise<ActionRunSummary[]> {
+  const token = userSettings.githubToken;
+  if (!token) {
+    throw new Error("GitHub token is required to load workflow runs");
+  }
+
+  const repoSlug = getRepositorySlugFromUrl(userSettings.repositoryUrl);
+  let mappings = userSettings.environmentMappings;
+  if (Object.keys(mappings).length === 0) {
+    try {
+      mappings = await loadEnvironmentMappingsFromCentralRepo();
+    } catch {
+      mappings = {};
+    }
+  }
+  const safeLimit = Math.min(Math.max(limit, 1), 50);
+  const response = await callGitHubApi(
+    token,
+    `/repos/${repoSlug}/actions/runs?per_page=${safeLimit}`,
+    "GET"
+  );
+
+  if (response.statusCode !== 200) {
+    throw new Error(
+      `GitHub Actions API responded with status ${response.statusCode}: ${response.body.slice(0, 300)}`
+    );
+  }
+
+  const payload = JSON.parse(response.body) as GitHubWorkflowRunsResponse;
+  const runs = payload.workflow_runs || [];
+  const tagTriggeredWorkflowPaths = getTagTriggeredWorkflowPaths(mappings);
+
+  return runs
+    .filter((run) => isTagTriggeredDeploymentRun(run, mappings, tagTriggeredWorkflowPaths))
+    .map((run) => toActionRunSummary(run, mappings));
+}
+
+function getMedianDurationSeconds(durations: number[]): number | null {
+  if (durations.length === 0) {
+    return null;
+  }
+
+  const sortedDurations = [...durations].sort((left, right) => left - right);
+  const middleIndex = Math.floor(sortedDurations.length / 2);
+
+  if (sortedDurations.length % 2 === 1) {
+    return sortedDurations[middleIndex];
+  }
+
+  return Math.round(
+    (sortedDurations[middleIndex - 1] + sortedDurations[middleIndex]) / 2
+  );
+}
+
+export async function getEnvironmentDeploySummaries(
+  limit = DEFAULT_DEPLOY_SUMMARY_LIMIT
+): Promise<EnvironmentDeploySummary[]> {
+  let mappings = userSettings.environmentMappings;
+  if (Object.keys(mappings).length === 0) {
+    try {
+      mappings = await loadEnvironmentMappingsFromCentralRepo();
+    } catch {
+      mappings = {};
+    }
+  }
+
+  const actionRuns = await getRecentActionRuns(limit);
+  const environments = Object.keys(mappings).sort((left, right) => left.localeCompare(right));
+
+  return environments.map((environmentName) => {
+    const environmentRuns = actionRuns.filter((run) => run.environment === environmentName);
+    const latestRun = environmentRuns[0] ?? null;
+    const successfulRuns = environmentRuns.filter(
+      (run) => run.conclusion === "success" && run.durationSeconds != null
+    );
+    const sampledDurations = successfulRuns
+      .slice(0, DEPLOY_RUNTIME_SAMPLE_SIZE)
+      .map((run) => run.durationSeconds as number);
+    const lastSuccessfulRun = successfulRuns[0] ?? null;
+
+    return {
+      environment: environmentName,
+      latestRun,
+      estimatedDurationSeconds: getMedianDurationSeconds(sampledDurations),
+      successfulSampleSize: sampledDurations.length,
+      lastSuccessfulAt: lastSuccessfulRun?.completedAt || null,
+    };
   });
 }
 

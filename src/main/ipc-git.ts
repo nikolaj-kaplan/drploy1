@@ -10,6 +10,8 @@ import {
   saveSettings,
   updateEnvironmentMapping,
   loadEnvironmentMappingsFromCentralRepo,
+  getEnvironmentDeploySummaries,
+  getRecentActionRuns,
 } from "./settings";
 import { logMessage } from "./logger";
 import { EnvironmentStatus, DeploymentResult, UserSettings } from "./types";
@@ -617,6 +619,40 @@ export function registerGitHandlers() {
         success: false,
         deployments: [],
         error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  ipcMain.on("get-action-runs", async (event, limit = 20) => {
+    try {
+      const runs = await getRecentActionRuns(limit);
+      event.reply("action-runs-retrieved", {
+        success: true,
+        runs,
+      });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      event.reply("action-runs-retrieved", {
+        success: false,
+        runs: [],
+        error: errorMessage,
+      });
+    }
+  });
+
+  ipcMain.on("get-environment-deploy-summaries", async (event, limit = 40) => {
+    try {
+      const summaries = await getEnvironmentDeploySummaries(limit);
+      event.reply("environment-deploy-summaries-retrieved", {
+        success: true,
+        summaries,
+      });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      event.reply("environment-deploy-summaries-retrieved", {
+        success: false,
+        summaries: [],
+        error: errorMessage,
       });
     }
   });

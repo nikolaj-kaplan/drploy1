@@ -1,5 +1,17 @@
-import { Commit, Environment, CommandResult, EnvironmentInfo } from '../types';
+import { ActionRun, Commit, Environment, CommandResult, EnvironmentDeploySummary, EnvironmentInfo } from '../types';
 const { ipcRenderer } = window.require('electron');
+
+interface ActionRunsResult {
+  success: boolean;
+  runs: ActionRun[];
+  error?: string;
+}
+
+interface EnvironmentDeploySummariesResult {
+  success: boolean;
+  summaries: EnvironmentDeploySummary[];
+  error?: string;
+}
 
 export const GitService = {
   /**
@@ -85,6 +97,26 @@ export const GitService = {
       });
       
       ipcRenderer.send('deploy-all-outdated');
+    });
+  },
+
+  getActionRuns: (limit = 20): Promise<ActionRunsResult> => {
+    return new Promise((resolve) => {
+      ipcRenderer.once('action-runs-retrieved', (_, result: ActionRunsResult) => {
+        resolve(result);
+      });
+
+      ipcRenderer.send('get-action-runs', limit);
+    });
+  },
+
+  getEnvironmentDeploySummaries: (limit = 40): Promise<EnvironmentDeploySummariesResult> => {
+    return new Promise((resolve) => {
+      ipcRenderer.once('environment-deploy-summaries-retrieved', (_, result: EnvironmentDeploySummariesResult) => {
+        resolve(result);
+      });
+
+      ipcRenderer.send('get-environment-deploy-summaries', limit);
     });
   },
   

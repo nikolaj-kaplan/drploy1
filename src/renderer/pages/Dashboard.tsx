@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Environment, Commit, AppSettings, EnvironmentInfo } from '../types';
+import { Environment, Commit, AppSettings, EnvironmentDeploySummary, EnvironmentInfo } from '../types';
 import { GitService } from '../services/GitService';
 import { SettingsService } from '../services/SettingsService';
 import { LogService } from '../services/LogService';
@@ -27,11 +27,16 @@ const Dashboard: React.FC<DashboardProps> = ({ refreshTrigger = 0 }) => {
   const [logOutput, setLogOutput] = useState<string>('');
   const [isLoadingCommits, setIsLoadingCommits] = useState(false);
   const [isOperationRunning, setIsOperationRunning] = useState(false);
+  const [deploySummariesByEnv, setDeploySummariesByEnv] = useState<Record<string, EnvironmentDeploySummary>>({});
+  const [isLoadingDeploySummaries, setIsLoadingDeploySummaries] = useState(false);
+  const [deploySummariesError, setDeploySummariesError] = useState<string | null>(null);
+  const [currentTimestamp, setCurrentTimestamp] = useState(() => Date.now());
   const [showProductionModal, setShowProductionModal] = useState(false);
   const [pendingDeployEnv, setPendingDeployEnv] = useState<string | null>(null);
   const [pendingBulkDeploy, setPendingBulkDeploy] = useState(false);
   const logUnsubscribe = useRef<(() => void) | null>(null);
   const logPanelRef = useRef<HTMLPreElement>(null);
+  const optimisticDeployStartedAtRef = useRef<Record<string, number>>({});
   
   // Scroll log panel to bottom whenever logOutput changes
   useEffect(() => {
@@ -72,6 +77,9 @@ const Dashboard: React.FC<DashboardProps> = ({ refreshTrigger = 0 }) => {
           }
           // Also check all statuses in the background
           handleCheckAllStatus(initialEnvironments);
+          if (settings.repositoryUrl) {
+            void loadDeploySummaries();
+          }
         }
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
@@ -93,6 +101,89 @@ const Dashboard: React.FC<DashboardProps> = ({ refreshTrigger = 0 }) => {
   const isProductionEnvironment = (envName: string): boolean => {
     const normalized = envName.toLowerCase();
     return normalized === 'prod' || normalized === 'production';
+  };
+
+  const loadDeploySummaries = async (silent = false) => {
+    if (!silent) {
+      setIsLoadingDeploySummaries(true);
+    }
+
+    try {
+      const result = await GitService.getEnvironmentDeploySummaries(40);
+      if (result.success) {
+        setDeploySummariesByEnv(prevSummaries => {
+          const fetchedSummaries = result.summaries.reduce<Record<string, EnvironmentDeploySummary>>((accumulator, summary) => {
+            accumulator[summary.environment] = summary;
+            return accumulator;
+          }, {});
+
+          for (const [envName, optimisticStartedAt] of Object.entries(optimisticDeployStartedAtRef.current)) {
+            const previousSummary = prevSummaries[envName];
+            const fetchedSummary = fetchedSummaries[envName];
+            const fetchedUpdatedAt = fetchedSummary?.latestRun
+              ? Date.parse(fetchedSummary.latestRun.updatedAt || fetchedSummary.latestRun.createdAt)
+              : Number.NaN;
+
+            if (!Number.isNaN(fetchedUpdatedAt) && fetchedUpdatedAt >= optimisticStartedAt) {
+              delete optimisticDeployStartedAtRef.current[envName];
+              continue;
+            }
+
+            if (previousSummary?.latestRun?.isActive) {
+              fetchedSummaries[envName] = previousSummary;
+            }
+          }
+
+          return fetchedSummaries;
+        });
+        setDeploySummariesError(null);
+      } else {
+        setDeploySummariesError(result.error || 'Failed to load deploy summaries.');
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      setDeploySummariesError(errorMessage);
+    } finally {
+      setIsLoadingDeploySummaries(false);
+    }
+  };
+
+  const setOptimisticDeploySummary = (envName: string) => {
+    const optimisticStartedAt = Date.now();
+    const nowIso = new Date(optimisticStartedAt).toISOString();
+    optimisticDeployStartedAtRef.current[envName] = optimisticStartedAt;
+
+    setDeploySummariesByEnv(prevSummaries => {
+      const existingSummary = prevSummaries[envName];
+      return {
+        ...prevSummaries,
+        [envName]: {
+          environment: envName,
+          estimatedDurationSeconds: existingSummary?.estimatedDurationSeconds ?? null,
+          successfulSampleSize: existingSummary?.successfulSampleSize ?? 0,
+          lastSuccessfulAt: existingSummary?.lastSuccessfulAt ?? null,
+          latestRun: {
+            id: existingSummary?.latestRun?.id ?? Date.now(),
+            runNumber: existingSummary?.latestRun?.runNumber ?? 0,
+            workflowName: existingSummary?.latestRun?.workflowName || 'Deploy',
+            displayTitle: `Deploy to ${envName}`,
+            event: 'push',
+            status: 'queued',
+            conclusion: null,
+            htmlUrl: existingSummary?.latestRun?.htmlUrl || '',
+            headBranch: envName,
+            headSha: null,
+            environment: envName,
+            createdAt: nowIso,
+            startedAt: nowIso,
+            updatedAt: nowIso,
+            completedAt: null,
+            durationSeconds: 0,
+            isActive: true,
+          },
+        },
+      };
+    });
   };
 
   // Select environment and show cached commits (or empty if not loaded yet)
@@ -136,12 +227,14 @@ const Dashboard: React.FC<DashboardProps> = ({ refreshTrigger = 0 }) => {
     }
   };
   const performDeployment = async (envName: string) => {
+    const previousDeploySummary = deploySummariesByEnv[envName] ?? null;
     setIsOperationRunning(true);
     setEnvironments(prevEnvs => 
       prevEnvs.map(env => 
         env.name === envName ? { ...env, status: 'loading' as 'loading' } : env
       )
     );
+    setOptimisticDeploySummary(envName);
     LogService.log(`Deploying to ${envName} environment...`);
     try {
       const result = await GitService.deployToEnvironment(envName);
@@ -149,12 +242,26 @@ const Dashboard: React.FC<DashboardProps> = ({ refreshTrigger = 0 }) => {
         LogService.log(`Successfully deployed to ${envName}.`);
         // Refresh status and commits after deployment
         await handleRefreshEnvironment(envName);
+        void loadDeploySummaries();
       } else {
         setEnvironments(prevEnvs => 
           prevEnvs.map(env => 
             env.name === envName ? { ...env, status: 'error' as 'error', error: result.error } : env
           )
         );
+        setDeploySummariesByEnv(prevSummaries => {
+          delete optimisticDeployStartedAtRef.current[envName];
+          if (!previousDeploySummary) {
+            const nextSummaries = { ...prevSummaries };
+            delete nextSummaries[envName];
+            return nextSummaries;
+          }
+
+          return {
+            ...prevSummaries,
+            [envName]: previousDeploySummary,
+          };
+        });
         LogService.log(`Error deploying to ${envName}: ${result.error}`, true);
       }
     } catch (error) {
@@ -165,6 +272,19 @@ const Dashboard: React.FC<DashboardProps> = ({ refreshTrigger = 0 }) => {
           env.name === envName ? { ...env, status: 'error' as 'error', error: errorMessage } : env
         )
       );
+      setDeploySummariesByEnv(prevSummaries => {
+        delete optimisticDeployStartedAtRef.current[envName];
+        if (!previousDeploySummary) {
+          const nextSummaries = { ...prevSummaries };
+          delete nextSummaries[envName];
+          return nextSummaries;
+        }
+
+        return {
+          ...prevSummaries,
+          [envName]: previousDeploySummary,
+        };
+      });
     } finally {
       setIsOperationRunning(false);
     }
@@ -225,6 +345,35 @@ const Dashboard: React.FC<DashboardProps> = ({ refreshTrigger = 0 }) => {
       handleCheckAllStatus();
     }
   }, [refreshTrigger]);
+
+  useEffect(() => {
+    if (isLoading || !repositoryUrl) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      void loadDeploySummaries(true);
+    }, 15000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [isLoading, repositoryUrl]);
+
+  useEffect(() => {
+    const hasActiveDeploy = Object.values(deploySummariesByEnv).some(summary => summary.latestRun?.isActive);
+    if (!hasActiveDeploy) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      setCurrentTimestamp(Date.now());
+    }, 1000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [deploySummariesByEnv]);
 
   const handleCheckAllStatus = async (initialEnvironments?: Environment[]) => {
     if (isOperationRunning) return;
@@ -347,12 +496,14 @@ const Dashboard: React.FC<DashboardProps> = ({ refreshTrigger = 0 }) => {
     
     try {
       for (const env of outdatedEnvs) {
+        const previousDeploySummary = deploySummariesByEnv[env.name] ?? null;
         // Set environment to loading
         setEnvironments(prevEnvs => 
           prevEnvs.map(envItem => 
             envItem.name === env.name ? { ...envItem, status: 'loading' as 'loading' } : envItem
           )
         );
+        setOptimisticDeploySummary(env.name);
         
         LogService.log(`Deploying to ${env.name} environment...`);
         
@@ -371,12 +522,26 @@ const Dashboard: React.FC<DashboardProps> = ({ refreshTrigger = 0 }) => {
               )
             );
           }
+          void loadDeploySummaries(true);
         } else {
           setEnvironments(prevEnvs => 
             prevEnvs.map(envItem => 
               envItem.name === env.name ? { ...envItem, status: 'error' as 'error', error: result.error } : envItem
             )
           );
+          setDeploySummariesByEnv(prevSummaries => {
+            delete optimisticDeployStartedAtRef.current[env.name];
+            if (!previousDeploySummary) {
+              const nextSummaries = { ...prevSummaries };
+              delete nextSummaries[env.name];
+              return nextSummaries;
+            }
+
+            return {
+              ...prevSummaries,
+              [env.name]: previousDeploySummary,
+            };
+          });
           
           LogService.log(`Error deploying to ${env.name}: ${result.error}`, true);
         }
@@ -439,6 +604,12 @@ const Dashboard: React.FC<DashboardProps> = ({ refreshTrigger = 0 }) => {
           Check All Status
         </button>
       </div>
+
+      {deploySummariesError && (
+        <div className="error-message deploy-status-error">
+          {deploySummariesError}
+        </div>
+      )}
       
       <div className="environments-table">
         <table>
@@ -448,7 +619,7 @@ const Dashboard: React.FC<DashboardProps> = ({ refreshTrigger = 0 }) => {
               <th>Branch</th>
               <th>Status</th>
               <th>Missing Commits</th>
-              <th>Last Deployed</th>
+              <th>Deploy</th>
               <th>Current HEAD</th>
               <th>Actions</th>
             </tr>
@@ -465,6 +636,9 @@ const Dashboard: React.FC<DashboardProps> = ({ refreshTrigger = 0 }) => {
                 isOperationRunning={isOperationRunning}
                 isDeployDisabled={disabledEnvironments.includes(env.name)}
                 missingCommitsCount={(commitsByEnv[env.name] || []).length}
+                deploySummary={deploySummariesByEnv[env.name] ?? null}
+                isDeploySummaryLoading={isLoadingDeploySummaries && !deploySummariesByEnv[env.name]}
+                currentTimestamp={currentTimestamp}
               />
             ))}
           </tbody>
