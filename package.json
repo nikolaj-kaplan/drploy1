@@ -12,7 +12,8 @@
     "pack": "npm run build && electron-builder --dir",
     "dist": "npm run build && electron-builder",
     "dist:win": "npm run build && electron-builder --win",
-    "dist:mac": "npm run build && electron-builder --mac"
+    "dist:mac": "npm run build && electron-builder --mac",
+    "test": "node --require ts-node/register --test src/main/tag-utils.test.ts"
   },
   "keywords": [],
   "author": "",

@@ -5,6 +5,7 @@ import * as os from "os";
 import * as fs from "fs";
 import * as https from "https";
 import { logMessage } from "./logger";
+import { parseEnvFromRef } from "./tag-utils";
 
 const CENTRAL_MAPPING_REPO = "drdk/umbraco-deploy-mapping";
 const CENTRAL_MAPPING_FILE_PATH = "environment-mappings.json";
@@ -139,7 +140,10 @@ function getTagTriggeredWorkflowPaths(mappings: Record<string, string>): Set<str
     const tagPatterns = extractTagPatternsFromWorkflow(workflowContent);
 
     const matchesDeploymentTag = environmentNames.some((environmentName) =>
-      tagPatterns.some((pattern) => globPatternToRegex(pattern).test(environmentName))
+      tagPatterns.some((pattern) => 
+        globPatternToRegex(pattern).test(environmentName) ||
+        pattern.startsWith(`${environmentName}/`)
+      )
     );
 
     if (matchesDeploymentTag) {
@@ -248,13 +252,13 @@ function inferEnvironmentFromRun(
 
   const normalizedHeadBranch = run.head_branch?.toLowerCase();
   if (normalizedHeadBranch) {
-    const environmentMatch = normalizedEnvironments.find(
-      ({ normalized }) => normalized === normalizedHeadBranch
-    );
-    if (environmentMatch) {
-      return environmentMatch.raw;
+    // Match by tag ref — handles both old flat ("prod") and new timestamped ("prod/2026-07-13T1034Z")
+    const envFromRef = parseEnvFromRef(normalizedHeadBranch, Object.keys(mappings));
+    if (envFromRef) {
+      return envFromRef;
     }
 
+    // Match by branch name (PR-triggered runs where head_branch is a branch, not a tag)
     const branchMatch = normalizedBranches.find(
       ({ normalizedBranch }) => normalizedBranch === normalizedHeadBranch
     );

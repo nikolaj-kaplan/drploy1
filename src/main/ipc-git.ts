@@ -4,6 +4,8 @@ import { ipcMain } from "electron";
 import * as fs from "fs";
 import * as path from "path";
 import { executeGitCommand } from "./git";
+import { formatDeployTimestamp, buildDeployTag } from "./tag-utils";
+import { performDeploy, parseLatestTagFromOutput } from "./deploy-logic";
 import {
   userSettings,
   getCurrentRepoPath,
@@ -28,17 +30,24 @@ function getBranchForEnvironment(mappings: Record<string, string>, env: string):
   return branch;
 }
 
+async function getLatestDeployTag(env: string): Promise<string | null> {
+  const result = await executeGitCommand(
+    `git tag -l "${env}/*" --sort=-version:refname`
+  );
+  return parseLatestTagFromOutput(result.output);
+}
+
 // Handler for fetching older deployed commits only (pagination)
 ipcMain.on("get-older-deployed-commits", async (event, { env, limit = 10, offset = 0 }) => {
   try {
     const mappings = await getLatestEnvironmentMappings();
     const branch = getBranchForEnvironment(mappings, env);
-    await executeGitCommand("git fetch --all --tags --force");
-    const tagExists = await executeGitCommand(`git tag -l ${env}`);
+    await executeGitCommand("git fetch --all --tags --force --prune --prune-tags");
+    const latestTag = await getLatestDeployTag(env);
     let deployedCommits: any[] = [];
-    if (tagExists.output.trim()) {
+    if (latestTag) {
       const deployedLogCmd =
-        `git log ${env}~0 --pretty=format:%H%n%h%n%s%n%an%n%ad%n--COMMIT-- --date=iso --skip=${offset} -n ${limit}`;
+        `git log ${latestTag}~0 --pretty=format:%H%n%h%n%s%n%an%n%ad%n--COMMIT-- --date=iso --skip=${offset} -n ${limit}`;
       const deployedCommitsResult = await executeGitCommand(deployedLogCmd);
       if (deployedCommitsResult.output.trim()) {
         const commitChunks = deployedCommitsResult.output.split('--COMMIT--').filter(chunk => chunk.trim());
@@ -85,23 +94,23 @@ ipcMain.on("get-environment-info", async (event, env) => {
     try {
   const mappings = await getLatestEnvironmentMappings();
   const branch = mappings[env];
-      await executeGitCommand("git fetch --all --tags --force");
+      await executeGitCommand("git fetch --all --tags --force --prune --prune-tags");
       // Get HEAD commit
       const headResult = await executeGitCommand(`git rev-parse origin/${branch}`);
       const headCommit = headResult.output.trim();
-      // Check if tag exists
-      const tagExists = await executeGitCommand(`git tag -l ${env}`);
+      // Find the latest deploy tag for this environment
+      const latestTag = await getLatestDeployTag(env);
       let lastDeployedCommit: string | null = null;
       let status: string = "up-to-date";
-      if (tagExists.output.trim()) {
-        const tagCommitResult = await executeGitCommand(`git rev-parse ${env}~0`);
+      if (latestTag) {
+        const tagCommitResult = await executeGitCommand(`git rev-parse ${latestTag}~0`);
         lastDeployedCommit = tagCommitResult.output.trim() || null;
-        const diffResult = await executeGitCommand(`git rev-list --count ${env}~0..origin/${branch}`);
+        const diffResult = await executeGitCommand(`git rev-list --count ${latestTag}~0..origin/${branch}`);
         const commitCount = parseInt(diffResult.output.trim()) || 0;
         if (commitCount > 0) {
           status = "pending-commits";
         } else {
-          const reverseResult = await executeGitCommand(`git rev-list --count origin/${branch}..${env}~0`);
+          const reverseResult = await executeGitCommand(`git rev-list --count origin/${branch}..${latestTag}~0`);
           const reverseCount = parseInt(reverseResult.output.trim()) || 0;
           if (reverseCount > 0) {
             status = "ahead-of-branch";
@@ -112,10 +121,9 @@ ipcMain.on("get-environment-info", async (event, env) => {
       }
       // Get commits (reuse logic from get-commits-between-tag-and-head)
       let commits: any[] = [];
-      const tagExistsAgain = await executeGitCommand(`git tag -l ${env}`);
-      if (tagExistsAgain.output.trim()) {
+      if (latestTag) {
         const logResult = await executeGitCommand(
-          `git log ${env}~0..origin/${branch} --pretty=format:%H%n%h%n%s%n%an%n%ad%n--COMMIT-- --date=iso`
+          `git log ${latestTag}~0..origin/${branch} --pretty=format:%H%n%h%n%s%n%an%n%ad%n--COMMIT-- --date=iso`
         );
         if (logResult.output.trim()) {
           const commitChunks = logResult.output.split('--COMMIT--').filter(chunk => chunk.trim());
@@ -235,22 +243,22 @@ export function registerGitHandlers() {
       const branch = getBranchForEnvironment(mappings, env);
 
       // Single fetch operation for all remotes and tags
-      await executeGitCommand("git fetch --all --tags --force");
+      await executeGitCommand("git fetch --all --tags --force --prune --prune-tags");
 
       // Get current HEAD commit of the remote branch (no checkout needed)
       const headResult = await executeGitCommand(`git rev-parse origin/${branch}`);
       const headCommit = headResult.output.trim();
 
-      // Check if tag exists
-      const tagExists = await executeGitCommand(`git tag -l ${env}`);
+      // Find the latest deploy tag for this environment
+      const latestTag = await getLatestDeployTag(env);
       let lastDeployedCommit: string | null = null;
-      let status: string = "up-to-date";      if (tagExists.output.trim()) {        // Get commit for tag
-        const tagCommitResult = await executeGitCommand(`git rev-parse ${env}~0`);
+      let status: string = "up-to-date";      if (latestTag) {        // Get commit for tag
+        const tagCommitResult = await executeGitCommand(`git rev-parse ${latestTag}~0`);
         lastDeployedCommit = tagCommitResult.output.trim() || null;
 
         // Check if there are commits between tag and remote HEAD (use count for efficiency)
         const diffResult = await executeGitCommand(
-          `git rev-list --count ${env}~0..origin/${branch}`
+          `git rev-list --count ${latestTag}~0..origin/${branch}`
         );
 
         const commitCount = parseInt(diffResult.output.trim()) || 0;
@@ -259,7 +267,7 @@ export function registerGitHandlers() {
         } else {
           // Check if tag is ahead of remote HEAD (environment deployed from newer commit)
           const reverseResult = await executeGitCommand(
-            `git rev-list --count origin/${branch}..${env}~0`
+            `git rev-list --count origin/${branch}..${latestTag}~0`
           );
           
           const reverseCount = parseInt(reverseResult.output.trim()) || 0;
@@ -296,29 +304,13 @@ export function registerGitHandlers() {
       const mappings = await getLatestEnvironmentMappings();
       const branch = getBranchForEnvironment(mappings, env);
 
-      // Fetch latest data and checkout branch
-      await executeGitCommand("git fetch --all --tags --force");
-      await executeGitCommand(`git checkout ${branch}`);
-      await executeGitCommand("git pull");
+      await executeGitCommand("git fetch --all --tags --force --prune --prune-tags");
 
-      // Delete existing tag if it exists
-      const tagExists = await executeGitCommand(`git tag -l ${env}`);
-      if (tagExists.output.trim()) {
-        await executeGitCommand(`git tag -d ${env}`);
-        await executeGitCommand(`git push origin :refs/tags/${env}`);
-      }
-
-      // Create new tag
-      await executeGitCommand(
-        `git tag -a ${env} -m "Deployed to ${env} on ${new Date().toISOString()}"`
-      );
-
-      // Push tag
-      const pushResult = await executeGitCommand(`git push origin ${env}`);
+      const newTag = await performDeploy(env, branch, executeGitCommand);
 
       event.reply(`${env}-deployed`, {
         success: true,
-        output: pushResult.output,
+        output: newTag,
       });
     } catch (error) {
       event.reply(`${env}-deployed`, {
@@ -334,15 +326,15 @@ export function registerGitHandlers() {
     try {
       const mappings = await getLatestEnvironmentMappings();
       const branch = getBranchForEnvironment(mappings, env);
-      await executeGitCommand("git fetch --all --tags --force");
-      const tagExists = await executeGitCommand(`git tag -l ${env}`);
+      await executeGitCommand("git fetch --all --tags --force --prune --prune-tags");
+      const latestTag = await getLatestDeployTag(env);
       let commits: any[] = [];
       let pendingCommits: any[] = [];
       let recentDeployedCommits: any[] = [];
-      if (tagExists.output.trim()) {
+      if (latestTag) {
         // Pending commits
         const logResult = await executeGitCommand(
-          `git log ${env}~0..origin/${branch} --pretty=format:%H%n%h%n%s%n%an%n%ad%n--COMMIT-- --date=iso`
+          `git log ${latestTag}~0..origin/${branch} --pretty=format:%H%n%h%n%s%n%an%n%ad%n--COMMIT-- --date=iso`
         );
         if (logResult.output.trim()) {
           const commitChunks = logResult.output.split('--COMMIT--').filter(chunk => chunk.trim());
@@ -375,7 +367,7 @@ export function registerGitHandlers() {
         }
         // Deployed commits (paginated)
         const deployedLogCmd =
-          `git log ${env}~0 --pretty=format:%H%n%h%n%s%n%an%n%ad%n--COMMIT-- --date=iso --skip=${deployedOffset} -n ${deployedLimit}`;
+          `git log ${latestTag}~0 --pretty=format:%H%n%h%n%s%n%an%n%ad%n--COMMIT-- --date=iso --skip=${deployedOffset} -n ${deployedLimit}`;
         const deployedCommitsResult = await executeGitCommand(deployedLogCmd);
         if (deployedCommitsResult.output.trim()) {
           const commitChunks = deployedCommitsResult.output.split('--COMMIT--').filter(chunk => chunk.trim());
@@ -460,7 +452,7 @@ export function registerGitHandlers() {
       const environments = Object.keys(mappings);
 
       // Single fetch operation for all remotes and tags at the beginning
-      await executeGitCommand("git fetch --all --tags --force");
+      await executeGitCommand("git fetch --all --tags --force --prune --prune-tags");
 
       // Create an array to hold all environment statuses
       const results: EnvironmentStatus[] = [];
@@ -474,19 +466,19 @@ export function registerGitHandlers() {
           const headResult = await executeGitCommand(`git rev-parse origin/${branch}`);
           const headCommit = headResult.output.trim();
           
-          // Check if tag exists
-          const tagExists = await executeGitCommand(`git tag -l ${env}`);
+          // Find the latest deploy tag for this environment
+          const latestTag = await getLatestDeployTag(env);
 
           let lastDeployedCommit: string | null = null;
-          let status = "up-to-date";          if (tagExists.output.trim()) {            // Get commit for tag
+          let status = "up-to-date";          if (latestTag) {            // Get commit for tag
             const tagCommitResult = await executeGitCommand(
-              `git rev-parse ${env}~0`
+              `git rev-parse ${latestTag}~0`
             );
             lastDeployedCommit = tagCommitResult.output.trim() || null;
 
             // Check if there are commits between tag and remote HEAD (use count for efficiency)
             const diffResult = await executeGitCommand(
-              `git rev-list --count ${env}~0..origin/${branch}`
+              `git rev-list --count ${latestTag}~0..origin/${branch}`
             );
 
             const commitCount = parseInt(diffResult.output.trim()) || 0;
@@ -495,7 +487,7 @@ export function registerGitHandlers() {
             } else {
               // Check if tag is ahead of remote HEAD (environment deployed from newer commit)
               const reverseResult = await executeGitCommand(
-                `git rev-list --count origin/${branch}..${env}~0`
+                `git rev-list --count origin/${branch}..${latestTag}~0`
               );
               
               const reverseCount = parseInt(reverseResult.output.trim()) || 0;
@@ -547,7 +539,7 @@ export function registerGitHandlers() {
       const environments = Object.keys(mappings);
 
       // Single fetch operation at the beginning
-      await executeGitCommand("git fetch --all --tags --force");
+      await executeGitCommand("git fetch --all --tags --force --prune --prune-tags");
 
       // Create an array to hold all deployment results
       const results: DeploymentResult[] = [];
@@ -557,12 +549,12 @@ export function registerGitHandlers() {
         const branch = mappings[env];
 
         try {
-          // Check if tag exists (without switching branches first)
-          const tagExists = await executeGitCommand(`git tag -l ${env}`);
-          let needsDeployment = false;          if (tagExists.output.trim()) {
+          // Find the latest deploy tag — no checkout needed
+          const latestTag = await getLatestDeployTag(env);
+          let needsDeployment = false;          if (latestTag) {
             // Check if there are commits between tag and remote HEAD (use count for efficiency)
             const diffResult = await executeGitCommand(
-              `git rev-list --count ${env}~0..origin/${branch}`
+              `git rev-list --count ${latestTag}~0..origin/${branch}`
             );
             const commitCount = parseInt(diffResult.output.trim()) || 0;
             needsDeployment = commitCount > 0;
@@ -571,28 +563,33 @@ export function registerGitHandlers() {
           }
 
           if (needsDeployment) {
-            // Now switch to branch only if deployment is needed
-            await executeGitCommand(`git checkout ${branch}`);
-            await executeGitCommand("git pull");
+            // Resolve remote HEAD directly — no checkout or pull needed
+            const headResult = await executeGitCommand(`git rev-parse origin/${branch}`);
+            if (!headResult.success || !headResult.output.trim()) {
+              throw new Error(`Failed to resolve HEAD of origin/${branch}: ${headResult.error}`);
+            }
+            const headSha = headResult.output.trim();
 
-            // Delete existing tag if it exists
-            if (tagExists.output.trim()) {
-              await executeGitCommand(`git tag -d ${env}`);
-              await executeGitCommand(`git push origin :refs/tags/${env}`);
+            // Generate immutable timestamped tag
+            const ts = formatDeployTimestamp(new Date());
+            const newTag = buildDeployTag(env, ts);
+
+            const tagResult = await executeGitCommand(
+              `git tag -a "${newTag}" ${headSha} -m "Deploy to ${env} on ${ts}"`
+            );
+            if (!tagResult.success) {
+              throw new Error(`Failed to create tag: ${tagResult.error}`);
             }
 
-            // Create new tag
-            await executeGitCommand(
-              `git tag -a ${env} -m "Deployed to ${env} on ${new Date().toISOString()}"`
-            );
-
-            // Push tag
-            const pushResult = await executeGitCommand(`git push origin ${env}`);
+            const pushResult = await executeGitCommand(`git push origin "${newTag}"`);
+            if (!pushResult.success) {
+              throw new Error(`Failed to push tag: ${pushResult.error}`);
+            }
 
             results.push({
               name: env,
               deployed: true,
-              output: pushResult.output,
+              output: newTag,
             });
           } else {
             results.push({
