@@ -1,6 +1,11 @@
 import { app } from "electron";
 import { createWindow } from "./window";
 import { logMessage } from "./logger";
+
+// Suppress broken-pipe errors when stdout/stderr have no reader (e.g. piped to head)
+for (const stream of [process.stdout, process.stderr]) {
+  stream.on("error", (err: NodeJS.ErrnoException) => { if (err.code !== "EPIPE") throw err; });
+}
 import { ensureBaseRepoDir } from "./settings";
 import { registerGitHandlers } from "./ipc-git";
 import { registerSettingsHandlers, registerLogHandler, registerFileSystemHandlers, registerShellHandlers } from "./ipc-settings";

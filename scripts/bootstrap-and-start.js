@@ -12,10 +12,15 @@ function printHeader() {
 }
 
 function run(command, args, options = {}) {
+  // Electron must launch in GUI mode; strip this so it doesn't run as plain Node (breaks ipcMain etc.)
+  const env = { ...process.env };
+  delete env.ELECTRON_RUN_AS_NODE;
+
   const result = spawnSync(command, args, {
     stdio: options.capture ? "pipe" : "inherit",
     encoding: "utf8",
     shell: true,
+    env,
   });
 
   return {
